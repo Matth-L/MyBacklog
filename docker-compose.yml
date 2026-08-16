@@ -1,0 +1,12 @@
+services:
+  mybacklog:
+    build: .
+    image: mybacklog:latest
+    container_name: mybacklog
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+      - ./backup_backlog:/app/backup_backlog
+      - ./cover_art:/app/cover_art
+    restart: unless-stopped

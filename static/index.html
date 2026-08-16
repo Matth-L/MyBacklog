@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyBacklog — Ma ludothèque</title>
+<link rel="icon" type="image/png" href="/static/img/icon.png">
+<link rel="apple-touch-icon" href="/static/img/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<!-- Fond d'écran personnalisable (image / gif / vidéo, avec opacité réglable) -->
+<div id="bg-media-layer" class="bg-media-layer"></div>
+
+<!-- Notifications (remplace les alert() du navigateur) -->
+<div id="toast-container" class="toast-container"></div>
+
+<!-- ===================== ÉCRAN DE CONFIGURATION INITIALE ===================== -->
+<div id="setup-screen" class="setup-screen hidden">
+  <div class="setup-card">
+    <img class="setup-mark" src="/static/img/icon.png" alt="MyBacklog">
+    <h1 data-i18n="setupTitle">Bienvenue dans votre backlog</h1>
+    <p class="setup-slogan" data-i18n="appSlogan">My backlog, locally, safely, anywhere.</p>
+    <p class="setup-sub" data-i18n="setupSub">Importez votre fichier <strong>My_Backlog.xlsx</strong>, ou les trois fichiers CSV
+      (Backlog, Avis, Complété) exportés depuis Google Sheets / Excel.</p>
+
+    <div class="field" style="text-align:left; margin-bottom:20px;">
+      <label data-i18n="setupPlayerName">Votre nom / pseudo (optionnel)</label>
+      <input type="text" id="setup-player-name" data-i18n-placeholder="optionsPlayerNamePlaceholder" placeholder="ex : Alex">
+    </div>
+
+    <div class="setup-tabs">
+      <button class="setup-tab active" data-mode="xlsx" data-i18n="setupTabXlsx">Fichier Excel unique</button>
+      <button class="setup-tab" data-mode="csv" data-i18n="setupTabCsv">3 fichiers CSV</button>
+    </div>
+
+    <div id="setup-xlsx" class="setup-panel">
+      <label class="dropzone" for="xlsx-input">
+        <span id="xlsx-label" data-i18n="setupChooseXlsx">Cliquez pour choisir votre .xlsx</span>
+      </label>
+      <input type="file" id="xlsx-input" accept=".xlsx">
+    </div>
+
+    <div id="setup-csv" class="setup-panel hidden">
+      <label class="dropzone small" for="backlog-input"><span id="backlog-label">Backlog.csv</span></label>
+      <input type="file" id="backlog-input" accept=".csv">
+      <label class="dropzone small" for="avis-input"><span id="avis-label">Avis.csv</span></label>
+      <input type="file" id="avis-input" accept=".csv">
+      <label class="dropzone small" for="complete-input"><span id="complete-label">Complété.csv</span></label>
+      <input type="file" id="complete-input" accept=".csv">
+    </div>
+
+    <button id="setup-import-btn" class="btn btn-primary btn-block" data-i18n="setupImport">Importer et démarrer</button>
+    <button id="setup-skip-btn" class="btn btn-ghost btn-block" data-i18n="setupSkip">Start backlog (sans import)</button>
+    <p id="setup-status" class="setup-status"></p>
+    <p class="setup-oss" data-i18n="ossNotice">Logiciel open-source et gratuit — personne ne devrait avoir à payer pour ça.</p>
+  </div>
+</div>
+
+<!-- ===================== APPLICATION ===================== -->
+<div id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand">
+      <img class="brand-mark" src="/static/img/icon.png" alt="">
+      <span class="brand-name">MyBacklog</span>
+      <button id="settings-btn" class="settings-gear" title="Paramètres" data-i18n-title="settingsTitle">⚙</button>
+    </div>
+    <nav class="nav">
+      <button class="nav-item active" data-view="dashboard">
+        <span class="nav-dot"></span><span data-i18n="navDashboard">My Backlog</span>
+      </button>
+      <button class="nav-item" data-view="completed">
+        <span class="nav-dot"></span><span data-i18n="navCompleted">Jeux complétés</span>
+      </button>
+      <button class="nav-item" data-view="backlog">
+        <span class="nav-dot"></span><span data-i18n="navBacklog">Backlog</span>
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <button id="sanitize-names-btn" class="btn btn-outline btn-sm" data-i18n="sanitizeNamesBtn">🧹 Nettoyer les noms</button>
+      <div id="sanitize-progress" class="bulk-progress hidden">
+        <div class="bulk-progress-track"><div class="bulk-progress-fill" id="sanitize-progress-fill"></div></div>
+        <div class="bulk-progress-text" id="sanitize-progress-text"></div>
+        <button class="btn btn-ghost btn-sm" id="sanitize-cancel-btn" data-i18n="cancelAction">Annuler</button>
+      </div>
+      <button id="bulk-cover-btn" class="btn btn-outline btn-sm" data-i18n="fillCoversBtn">🔍 Remplir les jaquettes</button>
+      <div id="bulk-cover-progress" class="bulk-progress hidden">
+        <div class="bulk-progress-track"><div class="bulk-progress-fill" id="bulk-progress-fill"></div></div>
+        <div class="bulk-progress-text" id="bulk-progress-text"></div>
+        <button class="btn btn-ghost btn-sm" id="bulk-cover-cancel-btn" data-i18n="cancelAction">Annuler</button>
+      </div>
+      <button id="export-xlsx-btn" class="btn btn-outline btn-sm" data-i18n="exportXlsx">Exporter .xlsx</button>
+      <button id="export-csv-btn" class="btn btn-outline btn-sm" data-i18n="exportCsv">Exporter .csv</button>
+      <button id="export-covers-btn" class="btn btn-outline btn-sm" data-i18n="exportCoversBtn">Exporter les jaquettes</button>
+      <p class="sidebar-slogan" data-i18n="appSlogan">My backlog, locally, safely, anywhere.</p>
+      <button id="close-app-btn" class="btn btn-danger-solid btn-sm" data-i18n="closeAppBtn">⏻ Fermer l'application</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-title-group">
+        <h2 id="view-title" data-i18n="navDashboard">My Backlog</h2>
+        <span id="player-name-tag" class="player-name-tag hidden"></span>
+      </div>
+      <div class="topbar-actions">
+        <input id="search-input" class="search-input hidden" type="text" data-i18n-placeholder="searchPlaceholder" placeholder="Rechercher un jeu…">
+        <select id="filter-available" class="filter-select hidden">
+          <option value="" data-i18n="filterAll">Tous les jeux</option>
+          <option value="1" data-i18n="filterOwned">Possédés</option>
+          <option value="0" data-i18n="filterNotOwned">Non possédés</option>
+        </select>
+        <select id="filter-year" class="filter-select hidden">
+          <option value="" data-i18n="filterAllYears">Toutes les années</option>
+        </select>
+        <select id="filter-dlc" class="filter-select hidden">
+          <option value="" data-i18n="filterDlcAll">DLC : tous</option>
+          <option value="1" data-i18n="filterDlcOnly">DLC uniquement</option>
+          <option value="0" data-i18n="filterDlcHide">Masquer les DLC</option>
+        </select>
+        <select id="filter-abandoned" class="filter-select hidden">
+          <option value="" data-i18n="filterAbandonedAll">Abandonnés : tous</option>
+          <option value="1" data-i18n="filterAbandonedOnly">Abandonnés uniquement</option>
+          <option value="0" data-i18n="filterAbandonedHide">Masquer les abandonnés</option>
+        </select>
+        <button id="toggle-year-bands-btn" class="btn btn-outline btn-sm hidden" style="width:auto;margin:0;" data-i18n="toggleYearBands">📅 Séparateurs d'année</button>
+        <button id="random-pick-btn" class="btn btn-outline btn-sm hidden" style="width:auto;margin:0;" data-i18n="randomPickBtn">🎲 Choix aléatoire</button>
+        <select id="sort-select" class="filter-select hidden">
+          <option value="chrono" data-i18n="sortChrono">Chronologique</option>
+          <option value="chrono-rev" data-i18n="sortChronoRev">Chronologique (inverse)</option>
+          <option value="alpha" data-i18n="sortAlpha">Alphabétique (A→Z)</option>
+          <option value="alpha-rev" data-i18n="sortAlphaRev">Alphabétique (Z→A)</option>
+        </select>
+        <div class="layout-control hidden" id="layout-control">
+          <button id="layout-control-btn" class="btn btn-outline btn-sm" style="width:auto;margin:0;" data-i18n="layoutControlBtn">⚏ Disposition</button>
+          <div class="layout-popover hidden" id="layout-popover">
+            <div class="layout-popover-row">
+              <span data-i18n="gridTileSize">Taille des jaquettes</span>
+              <input id="grid-size-slider" type="range" min="110" max="240" value="150">
+            </div>
+            <div class="layout-popover-row">
+              <span data-i18n="gridGapX">Espacement horizontal</span>
+              <input id="grid-gap-x-slider" type="range" min="2" max="40" value="16">
+            </div>
+            <div class="layout-popover-row">
+              <span data-i18n="gridGapY">Espacement vertical</span>
+              <input id="grid-gap-y-slider" type="range" min="2" max="40" value="16">
+            </div>
+          </div>
+        </div>
+        <button id="dashboard-edit-btn" class="btn btn-outline btn-sm hidden" data-i18n="editDashboard" style="width:auto;margin:0;">✏️ Modifier</button>
+        <button id="year-review-btn" class="btn btn-outline btn-sm hidden" data-i18n="yearReviewBtn" style="width:auto;margin:0;">🎉 My Year Review</button>
+        <button id="options-btn" class="options-btn" title="Options" data-i18n-title="optionsTitle">⋮</button>
+      </div>
+    </header>
+
+    <div id="orphan-review-banner" class="orphan-banner hidden"></div>
+    <div id="duplicates-banner" class="orphan-banner hidden"></div>
+
+    <!-- ---------- DASHBOARD ---------- -->
+    <section id="view-dashboard" class="view">
+      <div class="widgets-grid" id="widgets-grid"></div>
+    </section>
+
+    <!-- ---------- JEUX COMPLÉTÉS ---------- -->
+    <section id="view-completed" class="view hidden">
+      <div class="grid-wrap">
+        <div class="chrono-arrow" id="chrono-arrow-completed"></div>
+        <div class="grid" id="completed-grid"></div>
+      </div>
+    </section>
+
+    <!-- ---------- BACKLOG ---------- -->
+    <section id="view-backlog" class="view hidden">
+      <div class="grid-wrap">
+        <div class="chrono-arrow" id="chrono-arrow-backlog"></div>
+        <div class="grid" id="backlog-grid"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ===================== MODALE FICHE JEU ===================== -->
+<div id="game-modal" class="modal-overlay hidden">
+  <div class="modal modal-game">
+    <button class="modal-close" id="modal-close">×</button>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<!-- ===================== MODALE PARAMÈTRES ===================== -->
+<div id="settings-modal" class="modal-overlay hidden">
+  <div class="modal modal-settings">
+    <button class="modal-close" id="settings-close">×</button>
+    <div class="modal-body" id="settings-body"></div>
+  </div>
+</div>
+
+<!-- ===================== MODALE OPTIONS D'INTERFACE ===================== -->
+<div id="options-modal" class="modal-overlay hidden">
+  <div class="modal modal-settings">
+    <button class="modal-close" id="options-close">×</button>
+    <div class="modal-body" id="options-body"></div>
+  </div>
+</div>
+
+<!-- ===================== MODALE CONFIRMATION (générique) ===================== -->
+<div id="confirm-modal" class="modal-overlay hidden">
+  <div class="modal modal-confirm">
+    <div class="modal-body" id="confirm-body">
+      <p id="confirm-message"></p>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="confirm-cancel-btn"></button>
+        <button class="btn btn-danger-solid" id="confirm-ok-btn"></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== MODALE CONSENTEMENT RECHERCHE INTERNET ===================== -->
+<div id="consent-modal" class="modal-overlay hidden">
+  <div class="modal modal-consent">
+    <div class="modal-body" id="consent-body"></div>
+  </div>
+</div>
+
+<!-- ===================== MODALE MY YEAR REVIEW ===================== -->
+<div id="year-review-modal" class="modal-overlay hidden">
+  <div class="modal modal-year-review">
+    <button class="modal-close" id="year-review-close">×</button>
+    <div class="modal-body" id="year-review-body"></div>
+  </div>
+</div>
+
+<!-- ===================== MODALE CHOIX ALEATOIRE ===================== -->
+<div id="random-picker-modal" class="modal-overlay hidden">
+  <div class="modal modal-random-picker">
+    <button class="modal-close" id="random-picker-close">×</button>
+    <div class="modal-body" id="random-picker-body"></div>
+  </div>
+</div>
+
+<!-- ===================== MODALE SANITIZE GAME NAMES ===================== -->
+<div id="sanitize-modal" class="modal-overlay hidden">
+  <div class="modal modal-settings">
+    <button class="modal-close" id="sanitize-modal-close">×</button>
+    <div class="modal-body" id="sanitize-modal-body"></div>
+  </div>
+</div>
+
+<!-- ===================== MODALE EDITEUR DE JAQUETTE ===================== -->
+<div id="cover-editor-modal" class="modal-overlay hidden">
+  <div class="modal modal-cover-editor">
+    <button class="modal-close" id="cover-editor-close">×</button>
+    <div class="modal-body">
+      <h3 data-i18n="coverEditorTitle">Ajuster la jaquette</h3>
+      <div class="cover-editor-layout">
+        <div class="cover-editor-stage-wrap">
+          <div class="cover-editor-stage" id="cover-editor-stage">
+            <canvas id="cover-editor-canvas" width="600" height="900"></canvas>
+          </div>
+          <p class="hint cover-editor-drag-hint" data-i18n="coverEditorDragHint">Glissez pour repositionner · molette ou curseur pour zoomer</p>
+        </div>
+        <div class="cover-editor-controls">
+          <div class="cover-editor-fit-tabs" id="cover-editor-fit-tabs">
+            <button type="button" class="cover-editor-fit-tab" data-fit="crop" data-i18n="coverEditorFitCrop">Recadrer</button>
+            <button type="button" class="cover-editor-fit-tab" data-fit="cover" data-i18n="coverEditorFitCover">Remplir</button>
+            <button type="button" class="cover-editor-fit-tab" data-fit="stretch" data-i18n="coverEditorFitStretch">Étirer</button>
+          </div>
+          <div class="field cover-editor-zoom-field" id="cover-editor-zoom-field">
+            <label data-i18n="coverEditorZoom">Zoom</label>
+            <input type="range" id="cover-editor-zoom" min="100" max="400" value="100">
+          </div>
+          <button type="button" class="btn btn-outline btn-sm" id="cover-editor-reset-btn" data-i18n="coverEditorReset">Réinitialiser</button>
+          <p class="hint" id="cover-editor-hint"></p>
+          <div class="cover-editor-actions">
+            <button type="button" class="btn btn-outline" id="cover-editor-cancel-btn" data-i18n="confirmCancel">Annuler</button>
+            <button type="button" class="btn btn-primary" id="cover-editor-confirm-btn" data-i18n="coverEditorConfirm">Valider</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== NOTICE PREMIER SCAN DE JAQUETTES ===================== -->
+<div id="first-scan-notice-modal" class="modal-overlay hidden">
+  <div class="modal modal-settings">
+    <div class="modal-body" id="first-scan-notice-body"></div>
+  </div>
+</div>
+
+<script src="/static/js/translations/fr.js"></script>
+<script src="/static/js/translations/en.js"></script>
+<script src="/static/js/translations/index.js"></script>
+<script src="/static/js/i18n.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
