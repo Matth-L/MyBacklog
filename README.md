@@ -152,3 +152,6 @@ pytest tests/ -q
 - **No background jobs**: backups, cover-art bulk-fill, and sanitize scans all run in a
   daemon thread on explicit user action, with a polled `/status` endpoint for progress — nothing
   runs on a timer.
+
+
+*Disclaimer*: This app was created with the help of AI.
