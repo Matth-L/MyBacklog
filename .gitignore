@@ -41,3 +41,4 @@ Thumbs.db
 # but ignore any .env files too in case that pattern is ever used) ---
 .env
 .env.*
+.venv
