@@ -5,12 +5,15 @@
 A local, [Backloggd](https://backloggd.com/)-style app for managing your video game backlog from
 your existing Excel/CSV file — customizable dashboard, "Completed" / "Backlog" grids, notes,
 markdown reviews, cover art, and export to `.xlsx`/`.csv` at any time. Your data always stays
-yours.
+yours. 
+
+Apps like backloggd doesnt let you export to an xlsx so if you loose your mail or the site disappear, your backlog will too.
 
 **Free and open-source — nobody should have to pay for this.**
 
-Works identically on **Windows** and **Linux** (it's a small local web app: a Python server + a
-page that opens in your browser), and can also run via **Docker**.
+Works identically on **Windows** and **Linux**, and can also run via **Docker**.
+
+![My backlog](./img/my_backlog.png)
 
 ## Quick start
 
@@ -23,6 +26,8 @@ my_backlog_windows.bat      # Windows (double-click, or run from a terminal)
 
 This creates a virtual environment, installs dependencies, starts the server, and opens
 `http://127.0.0.1:5000` in your browser.
+
+I created an `example.xslx` file to show how this app is supposed to work. Don't hesitate to import it to test the app.
 
 **Docker**:
 
@@ -46,7 +51,8 @@ Then open `http://localhost:5000`.
   next.
 - **Cover art**: search across Steam/RAWG/Giant Bomb/Wikipedia, or upload your own — either way, an
   interactive **Discord/GitHub-style editor** (crop, fill, stretch, drag, zoom) 
-  Every fetched image is validated before being accepted.
+  Every fetched image is validated before being accepted. Nintendo games won't work, they are only available using IGBD,
+  and I don't really want to create an account with 2 steps auth for that.
 - **HowLongToBeat**: fetch an estimated playtime on demand (Main/Main+Extra/Completionist), never
   automatically.
 - **Sanitize Game Names**: suggests canonical titles (fixing abbreviations/incomplete names)
