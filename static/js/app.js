@@ -183,6 +183,11 @@ function applyA11yPrefs() {
   document.documentElement.dataset.dyslexiaFont = prefs.dyslexiaFont ? "1" : "0";
   document.documentElement.style.fontSize = `${Math.round(prefs.textScale * 100)}%`;
 }
+function applyTileTextColorPref() {
+  const prefs = getUiPrefs();
+  const color = prefs.tileTextColor === "black" ? "#161616" : "#f5f5f7";
+  document.documentElement.style.setProperty("--tile-text-color", color);
+}
 function themeSwatchHtml(key, currentThemeKey) {
   const theme = THEMES[key];
   return `
@@ -220,6 +225,10 @@ const UI_DEFAULTS = {
   abandonedTag: true,          // small red tag (DLC-style)
   abandonedGrey: false,        // greyed-out cover
   abandonedStrike: false,      // struck-through title
+  tileTextColor: "white",      // 'white' | 'black' — the tile title/meta text
+                                // sits on a fixed dark gradient overlay (so it
+                                // stays readable over any cover image), which
+                                // is why this isn't just the theme's text color
 };
 function getLayoutPrefs() {
   try {
@@ -1905,6 +1914,14 @@ async function openOptionsModal() {
           <option value="end" ${prefs.addButtonPos === "end" ? "selected" : ""}>${t("posEnd")}</option>
         </select>
       </div>
+      <div class="field">
+        <label>${t("optionsTileTextColor")}</label>
+        <select id="opt-tile-text-color">
+          <option value="white" ${prefs.tileTextColor === "white" ? "selected" : ""}>${t("optionsTileTextWhite")}</option>
+          <option value="black" ${prefs.tileTextColor === "black" ? "selected" : ""}>${t("optionsTileTextBlack")}</option>
+        </select>
+        <p class="hint">${t("optionsTileTextColorHint")}</p>
+      </div>
     </div>
     <div class="settings-section">
       <h4>${t("optionsTabs")}</h4>
@@ -1942,6 +1959,7 @@ async function openOptionsModal() {
     const playerName = document.getElementById("opt-player-name").value.trim();
     saveUiPrefs({
       addButtonPos: document.getElementById("opt-add-pos").value,
+      tileTextColor: document.getElementById("opt-tile-text-color").value,
       tabBacklog: document.getElementById("opt-tab-backlog").value.trim(),
       tabCompleted: document.getElementById("opt-tab-completed").value.trim(),
       abandonedTag: document.getElementById("opt-abandoned-tag").checked,
@@ -1952,6 +1970,7 @@ async function openOptionsModal() {
     setCachedPlayerName(playerName);
     renderPlayerNameTag();
     applyTabLabels();
+    applyTileTextColorPref();
     document.getElementById("view-title").textContent = tabLabel(state.view);
     document.getElementById("opt-saved-msg").textContent = "✅ " + t("optionsSaved");
     refreshCurrentView();
@@ -2526,8 +2545,10 @@ async function openSettingsModal() {
       <p class="hint">${t("settingsDataHint")}</p>
       <div class="field" style="margin-top:10px;">
         <label>${t("settingsImportSession")}</label>
-        <input type="text" id="session-import-path" placeholder="${t("settingsImportPathPlaceholder")}">
-        <button class="btn btn-outline btn-sm" id="session-import-btn" style="margin-top:8px;">${t("settingsImportBtn")}</button>
+        <label class="btn btn-outline btn-sm" style="width:auto;margin:0;text-align:center;display:inline-block;">
+          ${t("settingsImportChooseFile")}<input type="file" id="session-import-file" accept=".xlsx,.zip" style="display:none;">
+        </label>
+        <span id="session-import-filename" class="hint" style="margin-left:8px;"></span>
         <p id="session-import-status" class="hint"></p>
       </div>
     </div>
@@ -2635,18 +2656,23 @@ async function openSettingsModal() {
     loadBackupInfo();
   });
 
-  document.getElementById("session-import-btn").addEventListener("click", async () => {
-    const pathInput = document.getElementById("session-import-path");
+  document.getElementById("session-import-file").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    const filenameEl = document.getElementById("session-import-filename");
     const statusEl = document.getElementById("session-import-status");
-    const path = pathInput.value.trim();
-    if (!path) return;
+    if (!file) { filenameEl.textContent = ""; return; }
+    filenameEl.textContent = file.name;
+
     const ok = await showConfirm({
       message: `${t("sessionImportConfirmTitle")} ${t("sessionImportConfirmMsg")}`,
       okLabel: t("settingsImportBtn"), cancelLabel: t("confirmCancel"), danger: true,
     });
-    if (!ok) return;
+    if (!ok) { e.target.value = ""; filenameEl.textContent = ""; return; }
+
     statusEl.textContent = "…";
-    const res = await api.post("/api/session/import", { path });
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await api.upload("/api/session/import-file", fd);
     if (res.error) {
       statusEl.textContent = t("sessionImportError").replace("{error}", res.error);
       return;
@@ -2699,6 +2725,7 @@ document.addEventListener("DOMContentLoaded", () => {
   detectAndSetInitialLanguage();
   applyTheme(currentTheme());
   applyA11yPrefs();
+  applyTileTextColorPref();
   applyBgMedia();
   initCoverEditor();
   checkSetup();

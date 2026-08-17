@@ -213,7 +213,6 @@ window.I18N_TRANSLATIONS.fr = {
     settingsData: "Données",
     settingsDataHint: "Vos données (jeux, avis) et vos paramètres (nom, clés API) sont inclus dans chaque export .xlsx / .csv, dans un onglet/fichier « Settings ».",
     settingsImportSession: "Importer un nouvel Excel / session",
-    settingsImportPathPlaceholder: "ex : C:\\Users\\Alex\\Documents\\My_Backlog.xlsx",
     settingsImportBtn: "Importer",
     sessionImportConfirmTitle: "Remplacer la session actuelle ?",
     sessionImportConfirmMsg: "Cela va effacer vos jeux et avis actuels avant d'importer le nouveau fichier. Vos anciennes données restent récupérables via une sauvegarde ci-dessous. Continuer ?",
@@ -309,4 +308,11 @@ window.I18N_TRANSLATIONS.fr = {
     coverEditorEditBtn: "✂️ Ajuster",
     coverEditorLoading: "Chargement de l'image…",
     coverEditorLoadError: "❌ Impossible de charger cette image.",
+
+    optionsTileTextColor: "Couleur du texte sur les jaquettes",
+    optionsTileTextWhite: "Blanc",
+    optionsTileTextBlack: "Noir",
+    optionsTileTextColorHint: "Le titre affiché sur chaque jaquette repose sur un bandeau sombre fixe (pour rester lisible quelle que soit l'image) — changez ceci si le blanc ne ressort pas assez sur vos jaquettes.",
+
+    settingsImportChooseFile: "Choisir un fichier .xlsx ou .zip",
 };

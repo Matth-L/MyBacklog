@@ -110,15 +110,8 @@ def setup_skip():
 
 
 # ----------------------------------------------------------------- Session (import at any time)
-@app.route("/api/session/import", methods=["POST"])
-def session_import():
-    """Import another Excel/session at any time (not just first setup).
-    Always clears the current session first. Accepts a local path to a
-    .xlsx file or a MyBacklog session .zip (as produced by /api/export/*)."""
-    data = request.get_json(force=True) or {}
-    path = (data.get("path") or "").strip()
-    if not path:
-        return jsonify({"error": "A file path is required."}), 400
+def _do_session_import(path: str):
+    """Shared by both the path-based and file-upload session-import routes."""
     try:
         summary = session_mgr.import_new_session(path)
     except session_mgr.SessionImportError as e:
@@ -126,11 +119,43 @@ def session_import():
     except Exception as e:
         applog.error(f"Session import failed: {e}")
         return jsonify({"error": f"Import failed: {e}"}), 400
-    applog.info(f"Session import from path: {path}")
+    applog.info(f"Session import from: {path}")
     duplicates = dup_mgr.find_duplicates()
     if duplicates:
         summary["duplicates_found"] = len(duplicates)
     return jsonify({"ok": True, "summary": summary})
+
+
+@app.route("/api/session/import", methods=["POST"])
+def session_import():
+    """Import another Excel/session at any time (not just first setup).
+    Always clears the current session first. Accepts a local path to a
+    .xlsx file or a MyBacklog session .zip (as produced by /api/export/*).
+    Kept for scripting/automation use; the Settings UI itself now uses the
+    file-picker endpoint below instead of asking the user to type a path."""
+    data = request.get_json(force=True) or {}
+    path = (data.get("path") or "").strip()
+    if not path:
+        return jsonify({"error": "A file path is required."}), 400
+    return _do_session_import(path)
+
+
+@app.route("/api/session/import-file", methods=["POST"])
+def session_import_file():
+    """Same as /api/session/import, but for the normal case: the user picks
+    a file from a browser file input instead of typing a filesystem path."""
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "No file received."}), 400
+    ext = Path(f.filename).suffix.lower()
+    if ext not in (".xlsx", ".zip"):
+        return jsonify({"error": "Only .xlsx or .zip (exported session) files are supported."}), 400
+    dest = UPLOAD_TMP / secure_filename(f.filename)
+    f.save(dest)
+    try:
+        return _do_session_import(str(dest))
+    finally:
+        dest.unlink(missing_ok=True)
 
 
 # ----------------------------------------------------------------- Games CRUD

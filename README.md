@@ -1,21 +1,26 @@
 # MyBacklog
 
-*My backlog, locally, safely, anywhere.*
-
 A local, [Backloggd](https://backloggd.com/)-style app for managing your video game backlog from
-your existing Excel/CSV file — customizable dashboard, "Completed" / "Backlog" grids, notes,
+your existing Excel/CSV file, "Completed" / "Backlog" grids, notes,
 markdown reviews, cover art, and export to `.xlsx`/`.csv` at any time. Your data always stays
 yours. 
 
 Apps like backloggd doesnt let you export to an xlsx so if you loose your mail or the site disappear, your backlog will too.
 
-**Free and open-source — nobody should have to pay for this.**
+**Nobody should have to pay for this, or even give credientials really ...**
 
 Works identically on **Windows** and **Linux**, and can also run via **Docker**.
 
 ![My backlog](./img/my_backlog.png)
 
 ## Quick start
+
+Download the zip file and extract it : [here](https://github.com/Matth-L/MyBacklog/archive/refs/heads/main.zip).
+
+You can also clone the repository : 
+```sh
+git clone https://github.com/Matth-L/MyBacklog.git
+```
 
 **Windows/Linux (no Docker)** — requires [Python 3.10+](https://www.python.org/downloads/):
 
@@ -65,10 +70,11 @@ Then open `http://localhost:5000`.
 Cover art search can query the following, only when you use it explicitly and only after you
 consent:
 
-- **Steam Store** — public search, no key needed.
-- **RAWG.io** — free API key (optional, add it in Settings); skipped without one.
-- **Giant Bomb** — free API key (optional, add it in Settings); skipped without one.
-- **Wikipedia** — last-resort fallback if nothing else is found.
+- **Steam Grid DB** : public search, no key needed.
+- **Steam Store** : public search, no key needed.
+- **RAWG.io** : free API key (optional, add it in Settings); skipped without one.
+- **Giant Bomb** : free API key (optional, add it in Settings); skipped without one.
+- **Wikipedia** : last-resort fallback if nothing else is found.
 
 *Steam is a trademark of Valve Corporation. RAWG.io, Giant Bomb, and Wikipedia belong to their
 respective owners. Fetched images/metadata belong to their owners; MyBacklog doesn't redistribute

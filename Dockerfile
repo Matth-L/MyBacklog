@@ -9,9 +9,6 @@ COPY app.py .
 COPY backend/ backend/
 COPY static/ static/
 
-# Les données (base SQLite, jaquettes) vivent dans /app/data, les sauvegardes
-# xlsx/csv dans /app/backup_backlog, et vos jaquettes personnelles dans
-# /app/cover_art — à monter en volume pour persister entre redémarrages.
 ENV BACKLOG_DATA_DIR=/app/data
 ENV BACKLOG_BACKUP_DIR=/app/backup_backlog
 ENV BACKLOG_COVER_ART_DIR=/app/cover_art

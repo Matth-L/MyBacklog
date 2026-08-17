@@ -338,6 +338,58 @@ def test_session_import_reports_duplicates_found(client, tmp_path):
     assert res.get_json()["summary"]["duplicates_found"] == 1
 
 
+# ------------------------------------------------------------- Session import via file picker (not a typed path)
+
+def test_session_import_file_accepts_uploaded_xlsx(client):
+    """The Settings UI now offers a real file picker instead of asking the
+    user to type a filesystem path — this is the endpoint it calls."""
+    from backend import exporter as exporter_module
+    from io import BytesIO
+
+    client.post("/api/games", json={"title": "Old Game", "status": "backlog"})
+
+    xlsx_bytes = exporter_module.export_xlsx()  # a valid session file to re-import
+    res = client.post(
+        "/api/session/import-file",
+        data={"file": (BytesIO(xlsx_bytes), "my_session.xlsx")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    assert res.get_json()["ok"] is True
+
+
+def test_session_import_file_rejects_missing_file(client):
+    res = client.post("/api/session/import-file", data={}, content_type="multipart/form-data")
+    assert res.status_code == 400
+
+
+def test_session_import_file_rejects_unsupported_extension(client):
+    from io import BytesIO
+
+    res = client.post(
+        "/api/session/import-file",
+        data={"file": (BytesIO(b"not a real file"), "notes.txt")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 400
+
+
+def test_session_import_file_cleans_up_temp_file(client):
+    """The uploaded file is written to a temp dir to be read by the
+    importer — it must not be left behind afterwards."""
+    from backend import exporter as exporter_module
+    from io import BytesIO
+    import app as app_module
+
+    xlsx_bytes = exporter_module.export_xlsx()
+    client.post(
+        "/api/session/import-file",
+        data={"file": (BytesIO(xlsx_bytes), "cleanup_test.xlsx")},
+        content_type="multipart/form-data",
+    )
+    assert not (app_module.UPLOAD_TMP / "cleanup_test.xlsx").exists()
+
+
 # ------------------------------------------------------------- Data integrity: rename never breaks review linkage
 
 def test_renaming_a_game_preserves_its_review():

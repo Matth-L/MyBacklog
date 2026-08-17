@@ -211,7 +211,6 @@ window.I18N_TRANSLATIONS.en = {
     settingsData: "Data",
     settingsDataHint: "Your data (games, reviews) and settings (name, API keys) are included in every .xlsx / .csv export, in a \"Settings\" sheet/file.",
     settingsImportSession: "Import a new Excel / session",
-    settingsImportPathPlaceholder: "e.g. C:\\Users\\Alex\\Documents\\My_Backlog.xlsx",
     settingsImportBtn: "Import",
     sessionImportConfirmTitle: "Replace the current session?",
     sessionImportConfirmMsg: "This will erase your current games and reviews before importing the new file. Your old data stays recoverable from a backup below. Continue?",
@@ -307,4 +306,11 @@ window.I18N_TRANSLATIONS.en = {
     coverEditorEditBtn: "✂️ Adjust",
     coverEditorLoading: "Loading image…",
     coverEditorLoadError: "❌ Couldn't load that image.",
+
+    optionsTileTextColor: "Cover art text color",
+    optionsTileTextWhite: "White",
+    optionsTileTextBlack: "Black",
+    optionsTileTextColorHint: "The title shown on each cover sits on a fixed dark bar (so it stays readable regardless of the image) — change this if white doesn't stand out enough on your covers.",
+
+    settingsImportChooseFile: "Choose a .xlsx or .zip file",
 };

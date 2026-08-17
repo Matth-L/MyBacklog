@@ -239,7 +239,7 @@ input[type="range"]::-moz-range-track{background:var(--border); height:4px; bord
 .tile-add span{font-size:12px; text-align:center; padding:0 6px;}
 
 .tile-cover{
-  width:100%; height:100%; display:flex; align-items:flex-end; padding:10px;
+  width:100%; height:100%; position:relative;
   background-size:cover; background-position:center;
 }
 .tile-cover-fallback{
@@ -247,12 +247,19 @@ input[type="range"]::-moz-range-track{background:var(--border); height:4px; bord
 }
 .tile-spine{position:absolute; top:0; left:0; right:0; height:4px; z-index:2;}
 .tile-info{
-  position:relative; z-index:1; width:100%;
+  position:absolute; left:0; right:0; bottom:0; z-index:1;
   background:linear-gradient(0deg, rgba(0,0,0,.85) 20%, transparent 100%);
-  padding:24px 8px 6px; margin:-24px -10px -10px;
+  padding:24px 8px 6px;
 }
+/* This overlay is always a fixed dark gradient (it has to work over any
+   arbitrary, unpredictable cover image) — so its text can't just inherit
+   the theme's --text color, which is dark in light themes and would be
+   invisible against it. Defaults to white; --tile-text-color is
+   user-overridable (Options > Display) for the rare cover where white
+   still isn't legible enough. */
+.tile-title, .tile-meta{color:var(--tile-text-color, #f5f5f7);}
 .tile-title{font-size:12.5px; font-weight:600; line-height:1.25; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;}
-.tile-meta{font-size:10.5px; color:var(--text-muted); margin-top:3px; font-family:var(--font-mono);}
+.tile-meta{font-size:10.5px; margin-top:3px; font-family:var(--font-mono); opacity:.75;}
 .tile-badge{
   position:absolute; top:8px; right:8px; background:rgba(0,0,0,.55); backdrop-filter:blur(4px);
   color:var(--accent-2); font-family:var(--font-mono); font-size:11px; font-weight:600;
