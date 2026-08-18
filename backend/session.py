@@ -66,10 +66,7 @@ def import_new_session(path: str) -> dict:
             settings_json = tmp_path / "settings.json"
             missing = [f.name for f in (backlog_csv, avis_csv, complete_csv) if not f.exists()]
             if missing:
-                raise SessionImportError(
-                    "This zip doesn't look like a MyBacklog export "
-                    f"(missing: {', '.join(missing)})."
-                )
+                raise SessionImportError("invalid_session_zip", detail=_format_missing(missing))
             summary = import_all(
                 backlog_csv=str(backlog_csv), avis_csv=str(avis_csv), complete_csv=str(complete_csv),
             )

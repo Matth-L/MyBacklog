@@ -6,6 +6,7 @@ import difflib
 import pandas as pd
 from .db import get_conn
 from . import sequel_guard
+from .dateutils import month_name_to_number
 
 
 def _as_year(val):
@@ -138,7 +139,7 @@ def _extract_completed_games(df_complete):
             "hours_estimated": _to_float(get({"temps estime h", "temps estimes h", "temps estime en h"})),
             "hours_played": _to_float(get({"temps pris h"})),
             "duration_label": get({"duree"}),
-            "month_finished": get({"mois fini"}),
+            "month_finished": month_name_to_number(get({"mois fini"})),
             "year_finished": current_year,
             "worth_it": (str(get({"worth it"})).strip() if pd.notna(get({"worth it"})) else None),
             "rating": _to_float(get({"note", "note 10", "note 5"})),

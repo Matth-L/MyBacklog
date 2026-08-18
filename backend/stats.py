@@ -2,7 +2,7 @@
 import random
 from collections import defaultdict
 from .db import get_conn
-from .dateutils import MONTHS_FR as MONTHS
+from .dateutils import month_name_to_number
 
 
 def _fetch_all():
@@ -70,10 +70,15 @@ def compute_stats(year=None):
 
     by_month = defaultdict(int)
     for g in filtered:
-        if g["month_finished"]:
-            by_month[g["month_finished"]] += 1
-    by_month_list = [{"month": m, "nb": by_month.get(m, 0)} for m in MONTHS
-                      if by_month.get(m, 0) or m in by_month]
+        m = g["month_finished"]
+        if m:
+            # Tolerate both numbers (current format) and legacy French name
+            # strings (older rows not yet migrated) by normalizing to 1-12.
+            m = month_name_to_number(m)
+            if m:
+                by_month[m] += 1
+    by_month_list = [{"month": m, "nb": by_month.get(m, 0)} for m in range(1, 13)
+                      if by_month.get(m, 0)]
 
     # Rating histogram (scale /10; rounded to the nearest integer for
     # visual grouping — the exact value is still used everywhere else:

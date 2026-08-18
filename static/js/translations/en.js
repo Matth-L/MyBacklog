@@ -317,4 +317,35 @@ window.I18N_TRANSLATIONS.en = {
     optionsTileTextColorHint: "The title shown on each cover sits on a fixed dark bar (so it stays readable regardless of the image) — change this if white doesn't stand out enough on your covers.",
 
     settingsImportChooseFile: "Choose a .xlsx or .zip file",
+
+    // Months (1-12) stored as numbers, translated only for display.
+    months: ["January", "February", "March", "April", "May", "June",
+             "July", "August", "September", "October", "November", "December"],
+    monthsShort: ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+
+    // Backend error codes -> translated messages. {detail} is appended
+    // verbatim for dynamic errors (e.g. import failures).
+    err_no_file_received: "No file received. Send a .xlsx or the 3 .csv files.",
+    err_import_failed: "Import failed: {detail}",
+    err_file_path_required: "A file path is required.",
+    err_unsupported_session_format: "Only .xlsx or .zip (exported session) files are supported.",
+    err_file_not_found: "File not found: {detail}",
+    err_invalid_session_zip: "This zip doesn't look like a MyBacklog export (missing: {detail}).",
+    err_title_required: "A title is required",
+    err_nothing_to_update: "Nothing to update",
+    err_no_hltb_match: "No HowLongToBeat match found for this title.",
+    err_no_image: "No image",
+    err_unsupported_format: "Unsupported format",
+    err_invalid_image: "The uploaded file is not a valid image",
+    err_target_game_not_found: "Target game not found",
+    err_scan_already_running: "A scan is already running.",
+    err_url_required: "A URL is required",
+    err_download_failed: "Download failed or invalid file",
+    err_invalid_filename: "Invalid filename",
+    err_cover_art_not_found: "File not found in cover_art/",
+    err_backup_not_found: "Backup not found",
+    err_year_required: "A year is required",
+    err_no_games_year: "No games finished that year",
+    err_internal_error: "Internal server error.",
 };

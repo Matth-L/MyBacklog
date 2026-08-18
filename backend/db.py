@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS games (
     hours_played REAL,
     duration_label TEXT,                      -- e.g. "2d", "1 year"
     date_completed TEXT,                      -- exact date (YYYY-MM-DD), if known
-    month_finished TEXT,                      -- derived from date_completed, or imported as-is
+    month_finished INTEGER,                  -- 1-12 (derived from date_completed, or imported). Language-agnostic; the frontend translates.
     year_finished INTEGER,                    -- derived from date_completed, or imported as-is
     worth_it TEXT,                             -- Yes / No / Meh / PEAK
     rating REAL,                                -- rating out of 10 (decimals allowed, e.g. 7.5)
@@ -85,6 +85,25 @@ def _migrate(conn):
         conn.execute("ALTER TABLE orphan_reviews ADD COLUMN match_type TEXT")
     if "alternative_game_ids" not in orphan_cols:
         conn.execute("ALTER TABLE orphan_reviews ADD COLUMN alternative_game_ids TEXT")
+
+    _migrate_months_to_numbers(conn)
+
+
+def _migrate_months_to_numbers(conn):
+    """One-time migration of any legacy French month-name strings stored in
+    games.month_finished to integers (1-12). Months are now stored as
+    numbers so the data is language-agnostic; this converts older databases
+    in place. Idempotent: rows already holding a number (or NULL) are left
+    untouched."""
+    from .dateutils import month_name_to_number
+    rows = conn.execute("SELECT id, month_finished FROM games WHERE month_finished IS NOT NULL").fetchall()
+    for row in rows:
+        val = str(row["month_finished"]).strip()
+        if val.isdigit():
+            continue  # already numeric
+        n = month_name_to_number(val)
+        if n is not None:
+            conn.execute("UPDATE games SET month_finished = ? WHERE id = ?", (n, row["id"]))
 
 
 def init_db():

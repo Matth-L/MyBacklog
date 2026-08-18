@@ -98,7 +98,7 @@ def test_rating_and_month_charts_filterable_by_year_others_stay_global(temp_data
     assert ratings_2024[4] == 1
     assert ratings_2024[2] == 0  # ...mais la répartition des notes est bien filtrée
     months_2024 = [m["month"] for m in stats_2024["by_month"]]
-    assert months_2024 == ["Mars"]
+    assert months_2024 == [3]  # "Mars" -> 3 (numeric, language-agnostic)
 
 
 def test_year_review_builds_expected_highlights(temp_data_dir):
@@ -214,17 +214,17 @@ def test_accented_months_appear_in_monthly_chart(temp_data_dir):
     ('Fevrier'/'Aout'), so games finished in February or August were silently
     dropped from the monthly chart. Now both come from one canonical list."""
     from backend.db import get_conn
-    from backend.dateutils import MONTHS_FR
     from backend.stats import compute_stats
 
     conn = get_conn()
+    # Months are now stored as numbers (1-12); Feb=2, Aug=8.
     _insert(conn, title="Jeu Fev", status="completed", rating=5,
-            year_finished=2024, month_finished=MONTHS_FR[1])   # February
+            year_finished=2024, month_finished=2)   # February
     _insert(conn, title="Jeu Aout", status="completed", rating=5,
-            year_finished=2024, month_finished=MONTHS_FR[7])    # August
+            year_finished=2024, month_finished=8)    # August
     conn.commit()
     conn.close()
 
     months = {m["month"]: m["nb"] for m in compute_stats(year=2024)["by_month"]}
-    assert months.get(MONTHS_FR[1]) == 1  # February no longer lost
-    assert months.get(MONTHS_FR[7]) == 1   # August no longer lost
+    assert months.get(2) == 1  # February no longer lost
+    assert months.get(8) == 1   # August no longer lost

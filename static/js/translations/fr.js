@@ -319,4 +319,35 @@ window.I18N_TRANSLATIONS.fr = {
     optionsTileTextColorHint: "Le titre affiché sur chaque jaquette repose sur un bandeau sombre fixe (pour rester lisible quelle que soit l'image) — changez ceci si le blanc ne ressort pas assez sur vos jaquettes.",
 
     settingsImportChooseFile: "Choisir un fichier .xlsx ou .zip",
+
+    // Months (1-12) stored as numbers, translated only for display.
+    months: ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
+             "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"],
+    monthsShort: ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin",
+                  "Juil", "Août", "Sep", "Oct", "Nov", "Déc"],
+
+    // Backend error codes -> translated messages. {detail} is appended
+    // verbatim for dynamic errors (e.g. import failures).
+    err_no_file_received: "Aucun fichier reçu. Envoyez un .xlsx ou les 3 .csv.",
+    err_import_failed: "Erreur pendant l'import : {detail}",
+    err_file_path_required: "Un chemin de fichier est requis.",
+    err_unsupported_session_format: "Seuls les fichiers .xlsx ou .zip (session exportée) sont supportés.",
+    err_file_not_found: "Fichier introuvable : {detail}",
+    err_invalid_session_zip: "Ce zip ne ressemble pas à un export MyBacklog (manquant : {detail}).",
+    err_title_required: "Le titre est obligatoire",
+    err_nothing_to_update: "Rien à mettre à jour",
+    err_no_hltb_match: "Aucune correspondance HowLongToBeat trouvée pour ce titre.",
+    err_no_image: "Aucune image",
+    err_unsupported_format: "Format non supporté",
+    err_invalid_image: "Le fichier envoyé n'est pas une image valide",
+    err_target_game_not_found: "Jeu cible introuvable",
+    err_scan_already_running: "Une analyse est déjà en cours.",
+    err_url_required: "URL requise",
+    err_download_failed: "Échec du téléchargement ou fichier invalide",
+    err_invalid_filename: "Nom de fichier invalide",
+    err_cover_art_not_found: "Fichier introuvable dans cover_art/",
+    err_backup_not_found: "Sauvegarde introuvable",
+    err_year_required: "Année requise",
+    err_no_games_year: "Aucun jeu fini cette année-là",
+    err_internal_error: "Erreur interne du serveur.",
 };
