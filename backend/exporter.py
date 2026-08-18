@@ -12,9 +12,6 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
 from .db import get_conn, load_config, COVERS_DIR
 
-MONTH_ORDER = ["Janvier", "Fevrier", "Février", "Mars", "Avril", "Mai", "Juin",
-               "Juillet", "Aout", "Août", "Septembre", "Octobre", "Novembre", "Décembre"]
-
 HEADER_FILL = PatternFill(start_color="FF7C5CFF", end_color="FF7C5CFF", fill_type="solid")
 HEADER_FONT = Font(color="FFFFFFFF", bold=True)
 YEAR_FILL = PatternFill(start_color="FF1F212B", end_color="FF1F212B", fill_type="solid")

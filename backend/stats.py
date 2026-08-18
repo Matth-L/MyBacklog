@@ -2,9 +2,7 @@
 import random
 from collections import defaultdict
 from .db import get_conn
-
-MONTHS = ["Janvier", "Fevrier", "Mars", "Avril", "Mai", "Juin",
-          "Juillet", "Aout", "Septembre", "Octobre", "Novembre", "Décembre"]
+from .dateutils import MONTHS_FR as MONTHS
 
 
 def _fetch_all():

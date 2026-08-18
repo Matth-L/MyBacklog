@@ -206,3 +206,25 @@ def test_dlc_stats_include_backlog_count(temp_data_dir):
     assert stats["dlc"]["nb_dlc"] == 1
     assert stats["dlc"]["nb_base_games"] == 1
     assert stats["dlc"]["nb_dlc_backlog"] == 1
+
+
+def test_accented_months_appear_in_monthly_chart(temp_data_dir):
+    """Regression: stats.py used to keep its own unaccented month list
+    ('Fevrier'/'Aout') while dateutils emits the accented forms
+    ('Fevrier'/'Aout'), so games finished in February or August were silently
+    dropped from the monthly chart. Now both come from one canonical list."""
+    from backend.db import get_conn
+    from backend.dateutils import MONTHS_FR
+    from backend.stats import compute_stats
+
+    conn = get_conn()
+    _insert(conn, title="Jeu Fev", status="completed", rating=5,
+            year_finished=2024, month_finished=MONTHS_FR[1])   # February
+    _insert(conn, title="Jeu Aout", status="completed", rating=5,
+            year_finished=2024, month_finished=MONTHS_FR[7])    # August
+    conn.commit()
+    conn.close()
+
+    months = {m["month"]: m["nb"] for m in compute_stats(year=2024)["by_month"]}
+    assert months.get(MONTHS_FR[1]) == 1  # February no longer lost
+    assert months.get(MONTHS_FR[7]) == 1   # August no longer lost
