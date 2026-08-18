@@ -285,8 +285,31 @@ function saveUiPrefs(patch) {
 function getCachedPlayerName() { return localStorage.getItem("backlog_player_name") || ""; }
 function setCachedPlayerName(name) { localStorage.setItem("backlog_player_name", name || ""); }
 
-const MONTHS_FR = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
-                   "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+/* Months are stored in the database as numbers (1-12) and translated to the
+ * user's locale only for display. `monthName` pulls the localized name from
+ * the active translation table (each locale exposes `months` + `monthsShort`).
+ * `errorText` maps the stable, language-agnostic error codes returned by the
+ * backend to a translated message (appending any dynamic `detail`). */
+function _i18nTable() {
+  const lang = localStorage.getItem("backlog_lang") || "fr";
+  return (window.I18N_TRANSLATIONS || {})[lang] || (window.I18N_TRANSLATIONS || {})["en"] || {};
+}
+
+function monthName(n, short) {
+  n = parseInt(n, 10);
+  if (!(n >= 1 && n <= 12)) return "";
+  const t = _i18nTable();
+  const arr = short ? (t.monthsShort || t.months || []) : (t.months || []);
+  return arr[n - 1] || "";
+}
+
+function errorText(res) {
+  if (!res || !res.error) return "";
+  const t = _i18nTable();
+  const msg = t["err_" + res.error];
+  if (msg && res.detail) return msg.replace("{detail}", res.detail);
+  return msg || res.error;
+}
 
 // ============================================================ Rating stars (out of 10, half-points supported)
 function ratingStarsHtml(rating) {
@@ -526,7 +549,7 @@ function setupSetupScreen() {
     statusEl.textContent = t("setupImportInProgress");
     const res = await api.upload("/api/setup/import", formData);
     if (res.error) {
-      statusEl.textContent = "❌ " + res.error;
+      statusEl.textContent = "❌ " + errorText(res);
       return;
     }
     if (playerName) {
@@ -1024,7 +1047,7 @@ function renderMonthTrendWidget(el, stats) {
   const maxMonthNb = Math.max(1, ...stats.by_month.map(m => m.nb));
   const bars = stats.by_month.map(m => `
     <div class="bar-row">
-      <span class="label">${m.month.slice(0, 3)}</span>
+      <span class="label">${monthName(m.month, true)}</span>
       <div class="bar-track"><div class="bar-fill" style="width:${(m.nb / maxMonthNb) * 100}%"></div></div>
       <span class="val">${m.nb}</span>
     </div>`).join("") || `<p class="hint">${t("noDataYet")}</p>`;
@@ -1358,7 +1381,7 @@ function openGameModal(game, status) {
           <label>${t("dateMonth")} *</label>
           <select id="f-month">
             <option value="">${t("dateSelectMonth")}</option>
-            ${MONTHS_FR.map(m => `<option value="${m}" ${g.month_finished === m ? "selected" : ""}>${m}</option>`).join("")}
+            ${Array.from({length: 12}, (_, i) => i + 1).map(m => `<option value="${m}" ${parseInt(g.month_finished, 10) === m ? "selected" : ""}>${monthName(m)}</option>`).join("")}
           </select>
         </div>
       </div>
@@ -1518,7 +1541,7 @@ function bindModalEvents(g, status, isNew, isCompleted) {
         document.querySelector(".modal-cover-small").style.background = `url('${res.cover_path}') center/cover`;
         refreshCurrentView();
       } else {
-        showToast(res.error || t("coverSearchFailedToast"), "warning");
+        showToast(errorText(res) || t("coverSearchFailedToast"), "warning");
       }
     });
     coverUploadInput.value = ""; // allow re-selecting the same file later
@@ -1535,7 +1558,7 @@ function bindModalEvents(g, status, isNew, isCompleted) {
         document.querySelector(".modal-cover-small").style.background = `url('${res.cover_path}') center/cover`;
         refreshCurrentView();
       } else {
-        showToast(res.error || t("coverSearchFailedToast"), "warning");
+        showToast(errorText(res) || t("coverSearchFailedToast"), "warning");
       }
     });
   });
@@ -1565,7 +1588,7 @@ function bindModalEvents(g, status, isNew, isCompleted) {
     const res = await api.post(`/api/games/${g.id}/fetch-hltb`, { mode });
     stopLoading();
     if (res.error) {
-      statusEl.textContent = res.code === "no_match" ? t("hltbNoMatch") : res.error;
+      statusEl.textContent = res.code === "no_match" ? t("hltbNoMatch") : errorText(res);
       hltbFetchBtn.disabled = false;
       return;
     }
@@ -1600,7 +1623,7 @@ function bindModalEvents(g, status, isNew, isCompleted) {
       openGameModal({
         ...g, status: "completed", available: 1,
         year_finished: g.year_finished || today.getFullYear(),
-        month_finished: g.month_finished || MONTHS_FR[today.getMonth()],
+        month_finished: g.month_finished || (today.getMonth() + 1),
         date_completed: g.date_completed || today.toISOString().slice(0, 10),
       }, "completed");
     }
@@ -1643,7 +1666,7 @@ async function saveGame(g, status, isNew, isCompleted, forceDuplicate) {
     if (datePicked && !fallbackVisible) {
       const [year, month, day] = datePicked.split("-");
       data.year_finished = parseInt(year, 10);
-      data.month_finished = MONTHS_FR[parseInt(month, 10) - 1];
+      data.month_finished = parseInt(month, 10);  // already a number (1-12)
       data.date_completed = datePicked;
     } else {
       const year = document.getElementById("f-year").value;
@@ -1653,7 +1676,7 @@ async function saveGame(g, status, isNew, isCompleted, forceDuplicate) {
         return;
       }
       data.year_finished = parseInt(year, 10);
-      data.month_finished = month;
+      data.month_finished = parseInt(month, 10);  // option value is a number
       data.date_completed = null;
     }
   } else {
@@ -1811,7 +1834,7 @@ function openCoverSearchModal(g) {
         openGameModal(g, g.status);
         refreshCurrentView();
       } else {
-        showToast(res.error || t("coverSearchFailedToast"), "warning");
+        showToast(errorText(res) || t("coverSearchFailedToast"), "warning");
       }
     });
   };
@@ -1993,7 +2016,7 @@ async function startSanitizeScan() {
   if (!ok) return;
   const res = await api.post("/api/sanitize/scan", { allow_external: allowExternal });
   if (res.error) {
-    showToast(res.error, "warning");
+    showToast(errorText(res), "warning");
     return;
   }
   pollSanitizeStatus();
@@ -2541,6 +2564,20 @@ async function openSettingsModal() {
       </div>
     </div>
     <div class="settings-section">
+      <h4>${t("settingsSteamgriddb")}</h4>
+      <div class="field">
+        <input type="text" id="steamgriddb-key-input" value="${settings.steamgriddb_api_key || ""}" placeholder="steamgriddb.com/profile/preferences">
+        <p class="hint">${t("settingsSteamgriddbHint")}</p>
+      </div>
+    </div>
+    <div class="settings-section">
+      <h4>${t("settingsThegamesdb")}</h4>
+      <div class="field">
+        <input type="text" id="thegamesdb-key-input" value="${settings.thegamesdb_api_key || ""}" placeholder="thegamesdb.net">
+        <p class="hint">${t("settingsThegamesdbHint")}</p>
+      </div>
+    </div>
+    <div class="settings-section">
       <h4>${t("settingsData")}</h4>
       <p class="hint">${t("settingsDataHint")}</p>
       <div class="field" style="margin-top:10px;">
@@ -2650,6 +2687,12 @@ async function openSettingsModal() {
   document.getElementById("giantbomb-key-input").addEventListener("change", async (e) => {
     await api.post("/api/settings", { giantbomb_api_key: e.target.value.trim() });
   });
+  document.getElementById("steamgriddb-key-input").addEventListener("change", async (e) => {
+    await api.post("/api/settings", { steamgriddb_api_key: e.target.value.trim() });
+  });
+  document.getElementById("thegamesdb-key-input").addEventListener("change", async (e) => {
+    await api.post("/api/settings", { thegamesdb_api_key: e.target.value.trim() });
+  });
 
   document.getElementById("backup-now-btn").addEventListener("click", async () => {
     await api.post("/api/backups");
@@ -2674,7 +2717,7 @@ async function openSettingsModal() {
     fd.append("file", file);
     const res = await api.upload("/api/session/import-file", fd);
     if (res.error) {
-      statusEl.textContent = t("sessionImportError").replace("{error}", res.error);
+      statusEl.textContent = t("sessionImportError").replace("{error}", errorText(res));
       return;
     }
     statusEl.textContent = t("sessionImportSuccess")

@@ -1,11 +1,17 @@
 """Cover art search (SteamGridDB-style), from several sources:
 
 1. Steam Store (no key required) — good coverage for PC games.
-2. RAWG.io (optional free API key, set in Settings) — covers almost every
+2. SteamGridDB (optional free API key) — community-uploaded cover art in the
+   exact portrait "grid" dimensions Steam itself uses, often higher quality
+   than the Steam Store asset and available for non-Steam games too.
+3. RAWG.io (optional free API key, set in Settings) — covers almost every
    platform (consoles, retro, indies...), so much broader than Steam alone.
-3. Giant Bomb (optional free API key) — strong console/retro coverage,
+4. Giant Bomb (optional free API key) — strong console/retro coverage,
    community-curated database.
-4. Wikipedia (no key required) — last-resort fallback if nothing else was
+5. TheGamesDB (optional free API key) — open, community-maintained database
+   with strong console/retro box-art coverage (often the best source for
+   older Nintendo/Sony/Sega titles).
+6. Wikipedia (no key required) — last-resort fallback if nothing else was
    found (very old or obscure game).
 
 The searched title is first cleaned up (parentheses, DLC/edition suffixes,
@@ -15,7 +21,10 @@ active source are merged then re-ranked by similarity to the original title
 which isn't always the right game."""
 import os
 import re
+import io
+import time
 import difflib
+import threading
 import requests
 from pathlib import Path
 from . import sequel_guard
@@ -26,6 +35,17 @@ STEAM_HEADER_TEMPLATE = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appi
 RAWG_SEARCH_URL = "https://api.rawg.io/api/games"
 WIKI_SEARCH_URL = "https://en.wikipedia.org/w/api.php"
 WIKI_SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
+
+# SteamGridDB — community-uploaded cover art. Requires a free API key,
+# sent as a Bearer token in the Authorization header.
+STEAMGRIDDB_BASE_URL = "https://www.steamgriddb.com/api/v2"
+# Portrait cover dimensions Steam (and this app's grid) use: 600x900 (and the
+# smaller 342x482). We request the largest portrait grid available.
+STEAMGRIDDB_GRID_DIMENSIONS = "600x900,342x482"
+
+# TheGamesDB — open database of game artwork (boxart). Requires a free API
+# key passed as the `apikey` query parameter.
+THEGAMESDB_BASE_URL = "https://api.thegamesdb.net/v1"
 
 TIMEOUT = 6
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
@@ -94,7 +114,6 @@ def is_valid_image(path_or_bytes) -> bool:
     other file simply renamed with an image extension)."""
     try:
         from PIL import Image
-        import io
         if isinstance(path_or_bytes, (bytes, bytearray)):
             img = Image.open(io.BytesIO(path_or_bytes))
         else:
@@ -255,6 +274,133 @@ def _search_giantbomb(query, api_key):
     return results
 
 
+def _search_steamgriddb(query, api_key):
+    """SteamGridDB \u2014 community-uploaded cover art in the exact portrait
+    "grid" dimensions Steam itself uses (600x900). Two-step flow like Giant
+    Bomb: search games by name, then fetch the portrait grids for each match.
+    Requires a free API key, sent as a Bearer token in the Authorization
+    header. We restrict to static (non-animated) grids so the saved cover is a
+    real, validatable image file once downloaded."""
+    if not api_key:
+        return []
+    headers = {"Authorization": f"Bearer {api_key}"}
+    # Step 1: resolve the searched name to SteamGridDB game ids.
+    try:
+        resp = requests.get(
+            f"{STEAMGRIDDB_BASE_URL}/search/autocomplete/{query}",
+            headers=headers,
+            timeout=TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError):
+        return []
+    if not data.get("success"):
+        return []
+    games = data.get("data") or []
+    if not games:
+        return []
+
+    results = []
+    # Step 2: for each matched game, fetch its portrait grids. Capped to the
+    # first few games so a broad search doesn't fan out into many requests.
+    for game in games[:4]:
+        gid = game.get("id")
+        name = game.get("name")
+        if gid is None:
+            continue
+        try:
+            gresp = requests.get(
+                f"{STEAMGRIDDB_BASE_URL}/grids/game/{gid}",
+                params={"dimensions": STEAMGRIDDB_GRID_DIMENSIONS,
+                        "types": "static", "nsfw": "false", "humor": "false",
+                        "epilepsy": "false", "limit": 6},
+                headers=headers,
+                timeout=TIMEOUT,
+            )
+            gresp.raise_for_status()
+            gdata = gresp.json()
+        except (requests.RequestException, ValueError):
+            continue
+        if not gdata.get("success"):
+            continue
+        for grid in gdata.get("data") or []:
+            url = grid.get("url")
+            thumb = grid.get("thumb")
+            if not url:
+                continue
+            results.append({
+                "name": name,
+                "source": "steamgriddb",
+                "cover_url": url,
+                "fallback_url": thumb if thumb and thumb != url else None,
+            })
+    return results
+
+
+def _search_thegamesdb(query, api_key):
+    """TheGamesDB \u2014 open, community-maintained database with strong
+    console/retro box-art coverage. Two-step flow like SteamGridDB: search
+    games by name, then fetch front boxart for each match. Requires a free
+    API key passed as the `apikey` query parameter. Only the front boxart is
+    returned (the back of a box is rarely useful as a cover) and the original
+    (full-res) base URL is preferred so the editor can crop cleanly."""
+    if not api_key:
+        return []
+    try:
+        resp = requests.get(
+            f"{THEGAMESDB_BASE_URL}/Games/ByGameName",
+            params={"name": query, "apikey": api_key, "fields": "id"},
+            timeout=TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError):
+        return []
+    if data.get("code") != 200:
+        return []
+    games = (data.get("data") or {}).get("games") or []
+    if not games:
+        return []
+
+    results = []
+    for game in games[:6]:
+        gid = game.get("id")
+        name = game.get("game_title")
+        if gid is None:
+            continue
+        try:
+            iresp = requests.get(
+                f"{THEGAMESDB_BASE_URL}/Games/Images",
+                params={"games_id": gid, "apikey": api_key,
+                        "filter": "boxart"},
+                timeout=TIMEOUT,
+            )
+            iresp.raise_for_status()
+            idata = iresp.json()
+        except (requests.RequestException, ValueError):
+            continue
+        if idata.get("code") != 200:
+            continue
+        base = ((idata.get("data") or {}).get("base_url") or {}).get("original")
+        if not base:
+            continue
+        for art in ((idata.get("data") or {}).get("boxart") or {}).get(str(gid), []):
+            if art.get("type") != "boxart" or art.get("side") != "front":
+                continue
+            filename = art.get("filename")
+            if not filename:
+                continue
+            url = base + filename
+            results.append({
+                "name": name,
+                "source": "thegamesdb",
+                "cover_url": url,
+                "fallback_url": None,  # no distinct 2nd URL for this source
+            })
+    return results
+
+
 def _search_wikipedia(query):
     """No-API-key fallback: searches Wikipedia and grabs the page's cover
     image via a single combined query (generator=search + pageimages), which
@@ -347,7 +493,8 @@ def generate_placeholder_cover(title: str, dest_path):
 
 
 def search_cover_candidates(title: str, max_results: int = 8, rawg_api_key: str = None,
-                             giantbomb_api_key: str = None):
+                             giantbomb_api_key: str = None, steamgriddb_api_key: str = None,
+                             thegamesdb_api_key: str = None):
     """Searches for cover art across several sources and returns the best
     candidates, ranked by similarity to the searched title — rather than in
     the raw order returned by a single API."""
@@ -368,17 +515,21 @@ def search_cover_candidates(title: str, max_results: int = 8, rawg_api_key: str 
 
     for variant in variants:
         _add_all(_search_steam(variant))
+        if steamgriddb_api_key:
+            _add_all(_search_steamgriddb(variant, steamgriddb_api_key))
         if rawg_api_key:
             _add_all(_search_rawg(variant, rawg_api_key))
         if giantbomb_api_key:
             _add_all(_search_giantbomb(variant, giantbomb_api_key))
+        if thegamesdb_api_key:
+            _add_all(_search_thegamesdb(variant, thegamesdb_api_key))
         if len(merged) >= max_results:
             # Enough candidates found: no need to query the remaining
             # search variants (reduces latency and network calls).
             break
 
     if not merged:
-        # Nothing found on Steam/RAWG/Giant Bomb (very obscure game, no keys
+        # Nothing found on any keyed source (very obscure game, no keys
         # configured...): last resort, less precise but broader coverage.
         _add_all(_search_wikipedia(variants[0]))
 
@@ -387,7 +538,8 @@ def search_cover_candidates(title: str, max_results: int = 8, rawg_api_key: str 
 
 
 def search_with_local(title: str, max_results: int = 8, rawg_api_key: str = None,
-                       giantbomb_api_key: str = None):
+                       giantbomb_api_key: str = None, steamgriddb_api_key: str = None,
+                       thegamesdb_api_key: str = None):
     """For interactive search (one game at a time): returns both a possible
     local match (cover_art/ folder) and the online candidates, so the user
     can choose between them if both exist."""
@@ -396,7 +548,9 @@ def search_with_local(title: str, max_results: int = 8, rawg_api_key: str = None
     if local and is_valid_image(local):
         local_match = {"filename": local.name, "preview_url": f"/api/cover-art-preview/{local.name}"}
     online = search_cover_candidates(title, max_results=max_results, rawg_api_key=rawg_api_key,
-                                      giantbomb_api_key=giantbomb_api_key)
+                                      giantbomb_api_key=giantbomb_api_key,
+                                      steamgriddb_api_key=steamgriddb_api_key,
+                                      thegamesdb_api_key=thegamesdb_api_key)
     return {"local_match": local_match, "online": online}
 
 
@@ -407,31 +561,67 @@ def _detect_image_ext(content: bytes) -> str:
     the wrong Content-Type."""
     try:
         from PIL import Image
-        import io
         fmt = (Image.open(io.BytesIO(content)).format or "JPEG").upper()
     except Exception:
         return ".jpg"
     return {"JPEG": ".jpg", "PNG": ".png", "GIF": ".gif", "WEBP": ".webp"}.get(fmt, ".jpg")
 
 
-def download_image(url: str, dest_path) -> bool:
-    """Downloads an image to dest_path. Checks the content is really an image
-    before writing it (protection against an executable or any other file
-    disguised with an image extension). Returns True on success."""
+# Minimum byte size for a plausible cover image. Anything smaller is almost
+# certainly an error page, a tracking pixel, or a truncated response — not a
+# real cover — so it's rejected before the (costlier) image-validation step.
+MIN_IMAGE_BYTES = 500
+
+
+def _fetch_valid_image_bytes(url: str):
+    """Shared download + validation core for every cover fetch.
+
+    Fetches `url`, rejects non-image Content-Types, and verifies the bytes
+    really decode as an image (defends against executables renamed .jpg, error
+    pages, etc.). Returns the validated image bytes, or None on any failure.
+    Both download_image() and download_image_with_detected_ext() build on this
+    so the fetch/validate logic lives in exactly one place.
+
+        +-----------+     GET url      +---------------+
+        |  caller   | ----------------> |  requests.get |
+        +-----------+                    +-------+-------+
+                                               |  resp.content
+                                               v
+                                  +--------------------+
+                                  | status==200 ?      |--- no --> None
+                                  | bytes >= MIN ?     |
+                                  | content-type img?  |
+                                  | is_valid_image ?   |
+                                  +---------+----------+
+                                            | yes
+                                            v
+                                  return content (bytes)
+    """
     try:
         resp = requests.get(url, timeout=TIMEOUT)
-        if resp.status_code != 200 or len(resp.content) < 500:
-            return False
-        content_type = resp.headers.get("content-type", "")
-        if content_type and not content_type.startswith("image/"):
-            return False
-        if not is_valid_image(resp.content):
-            return False
-        with open(dest_path, "wb") as f:
-            f.write(resp.content)
-        return True
     except requests.RequestException:
+        return None
+    if resp.status_code != 200 or len(resp.content) < MIN_IMAGE_BYTES:
+        return None
+    content_type = resp.headers.get("content-type", "")
+    if content_type and not content_type.startswith("image/"):
+        return None
+    if not is_valid_image(resp.content):
+        return None
+    return resp.content
+
+
+def download_image(url: str, dest_path) -> bool:
+    """Downloads an image to dest_path (fixed extension). Checks the content
+    is really an image before writing it (protection against an executable or
+    any other file disguised with an image extension). Returns True on
+    success. Used when the destination extension is already known."""
+    content = _fetch_valid_image_bytes(url)
+    if content is None:
         return False
+    with open(dest_path, "wb") as f:
+        f.write(content)
+    return True
 
 
 def download_image_with_detected_ext(url: str, base_path):
@@ -441,22 +631,13 @@ def download_image_with_detected_ext(url: str, base_path):
     Used wherever the source format isn't known ahead of time — a manually
     pasted cover URL, or an auto-search result — so GIF covers keep working
     once saved. Returns None on failure."""
-    base_path = Path(base_path)
-    try:
-        resp = requests.get(url, timeout=TIMEOUT)
-        if resp.status_code != 200 or len(resp.content) < 500:
-            return None
-        content_type = resp.headers.get("content-type", "")
-        if content_type and not content_type.startswith("image/"):
-            return None
-        if not is_valid_image(resp.content):
-            return None
-        dest = base_path.with_suffix(_detect_image_ext(resp.content))
-        with open(dest, "wb") as f:
-            f.write(resp.content)
-        return dest
-    except requests.RequestException:
+    content = _fetch_valid_image_bytes(url)
+    if content is None:
         return None
+    dest = Path(base_path).with_suffix(_detect_image_ext(content))
+    with open(dest, "wb") as f:
+        f.write(content)
+    return dest
 
 
 # --------------------------------------------------------------------------
@@ -465,8 +646,6 @@ def download_image_with_detected_ext(url: str, base_path):
 # exposed via get_bulk_status() so the frontend can show a progress bar by
 # polling the API regularly.
 # --------------------------------------------------------------------------
-import threading
-import time
 
 _bulk_state = {
     "running": False, "total": 0, "done": 0, "found": 0, "skipped": 0,
@@ -492,12 +671,16 @@ def _bulk_worker():
     cfg = load_config()
     rawg_key = cfg.get("rawg_api_key") or None
     giantbomb_key = cfg.get("giantbomb_api_key") or None
+    steamgriddb_key = cfg.get("steamgriddb_api_key") or None
+    thegamesdb_key = cfg.get("thegamesdb_api_key") or None
 
-    conn = get_conn()
-    rows = conn.execute(
+    # One connection for the read, kept open for writes too: opening a SQLite
+    # connection per row (the old behaviour) is wasteful and can hit the
+    # per-connection WAL/checkpoint overhead hundreds of times per batch.
+    _write_conn = get_conn()
+    rows = _write_conn.execute(
         "SELECT id, title FROM games WHERE cover_path IS NULL OR cover_path = ''"
     ).fetchall()
-    conn.close()
 
     # Index built once rather than rescanned for every game.
     local_index = build_local_cover_index()
@@ -527,7 +710,8 @@ def _bulk_worker():
             if not found:
                 candidates = search_cover_candidates(
                     row["title"], max_results=1, rawg_api_key=rawg_key,
-                    giantbomb_api_key=giantbomb_key,
+                    giantbomb_api_key=giantbomb_key, steamgriddb_api_key=steamgriddb_key,
+                    thegamesdb_api_key=thegamesdb_key,
                 )
                 if candidates:
                     base = COVERS_DIR / safe_title_filename(row["title"], row["id"], "")
@@ -543,13 +727,15 @@ def _bulk_worker():
                     if generate_placeholder_cover(row["title"], dest):
                         found = True
             if found:
-                conn = get_conn()
-                conn.execute(
+                # Persist the cover path. Reuse the single batch connection
+                # rather than opening one per game (the old code opened, wrote,
+                # and closed a fresh SQLite connection on every row — fine for
+                # 10 games, painful for 500).
+                _write_conn.execute(
                     "UPDATE games SET cover_path = ? WHERE id = ?",
                     (f"/api/covers/{dest.name}?v={int(time.time() * 1000)}", row["id"]),
                 )
-                conn.commit()
-                conn.close()
+                _write_conn.commit()
         except Exception:
             # An error on one game must never block the whole batch: log it
             # silently and move on to the next one.
@@ -560,6 +746,11 @@ def _bulk_worker():
             _bulk_state["found" if found else "skipped"] += 1
 
         time.sleep(BULK_FILL_DELAY_SECONDS)
+
+    try:
+        _write_conn.close()
+    except Exception:
+        pass
 
     with _bulk_lock:
         _bulk_state["running"] = False

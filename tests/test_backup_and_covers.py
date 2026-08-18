@@ -213,7 +213,8 @@ def test_bulk_fill_covers_updates_all_missing_games(monkeypatch, temp_data_dir):
     conn.commit()
     conn.close()
 
-    def fake_search(title, max_results=1, rawg_api_key=None, giantbomb_api_key=None):
+    def fake_search(title, max_results=1, rawg_api_key=None, giantbomb_api_key=None,
+                      steamgriddb_api_key=None, thegamesdb_api_key=None):
         return [{"name": title, "appid": 42, "cover_url": "http://fake/cover.jpg", "fallback_url": "http://fake/hdr.jpg"}]
 
     def fake_download(url, base_path):
@@ -256,7 +257,7 @@ def test_bulk_fill_skips_game_when_placeholder_generation_also_fails(monkeypatch
     conn.commit()
     conn.close()
 
-    monkeypatch.setattr(cover_search, "search_cover_candidates", lambda title, max_results=1, rawg_api_key=None, giantbomb_api_key=None: [])
+    monkeypatch.setattr(cover_search, "search_cover_candidates", lambda title, max_results=1, rawg_api_key=None, giantbomb_api_key=None, steamgriddb_api_key=None, thegamesdb_api_key=None: [])
     monkeypatch.setattr(cover_search, "generate_placeholder_cover", lambda title, dest: False)
     monkeypatch.setattr(cover_search, "BULK_FILL_DELAY_SECONDS", 0)
 
@@ -284,7 +285,8 @@ def test_bulk_fill_survives_unexpected_exception_on_one_game(monkeypatch, temp_d
     conn.commit()
     conn.close()
 
-    def boom(title, max_results=1, rawg_api_key=None):
+    def boom(title, max_results=1, rawg_api_key=None, giantbomb_api_key=None,
+              steamgriddb_api_key=None, thegamesdb_api_key=None):
         raise RuntimeError("erreur inattendue")
 
     monkeypatch.setattr(cover_search, "search_cover_candidates", boom)
@@ -349,6 +351,152 @@ def test_giantbomb_search_handles_api_error_status(monkeypatch, temp_data_dir):
 
     monkeypatch.setattr(cover_search.requests, "get", lambda *a, **k: FakeResp())
     assert cover_search._search_giantbomb("Zelda", "bad-key") == []
+
+
+def test_steamgriddb_search_without_key_returns_empty(temp_data_dir):
+    from backend import covers as cover_search
+    assert cover_search._search_steamgriddb("Zelda", None) == []
+
+
+def test_steamgriddb_search_parses_grids(monkeypatch, temp_data_dir):
+    """Two-step flow: search/autocomplete returns game ids, then /grids/game
+    returns the portrait grids for each. Both must use the Bearer key."""
+    from backend import covers as cover_search
+
+    seen_headers = {}
+
+    class FakeResp:
+        status_code = 200
+        def __init__(self, payload):
+            self._payload = payload
+        def raise_for_status(self): pass
+        def json(self):
+            return self._payload
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        seen_headers.setdefault("auth", []).append(headers.get("Authorization"))
+        if "/search/autocomplete/" in url:
+            return FakeResp({"success": True, "data": [{"id": 5, "name": "Celeste"}]})
+        if "/grids/game/" in url:
+            return FakeResp({"success": True, "data": [
+                {"url": "http://fake/grid.png", "thumb": "http://fake/thumb.png"},
+            ]})
+        return FakeResp({"success": False})
+
+    monkeypatch.setattr(cover_search.requests, "get", fake_get)
+    results = cover_search._search_steamgriddb("Celeste", "sgdb-key")
+    assert len(results) == 1
+    assert results[0]["source"] == "steamgriddb"
+    assert results[0]["cover_url"] == "http://fake/grid.png"
+    assert results[0]["fallback_url"] == "http://fake/thumb.png"
+    assert all(h == "Bearer sgdb-key" for h in seen_headers["auth"])
+
+
+def test_steamgriddb_search_handles_network_failure_gracefully(monkeypatch, temp_data_dir):
+    from backend import covers as cover_search
+    import requests as req_module
+
+    def boom(*a, **k):
+        raise req_module.RequestException("down")
+    monkeypatch.setattr(cover_search.requests, "get", boom)
+    assert cover_search._search_steamgriddb("Anything", "fake-key") == []
+
+
+def test_steamgriddb_search_skips_when_autocomplete_unsuccessful(monkeypatch, temp_data_dir):
+    from backend import covers as cover_search
+
+    class FakeResp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            return {"success": False, "errors": ["bad key"]}
+
+    monkeypatch.setattr(cover_search.requests, "get", lambda *a, **k: FakeResp())
+    assert cover_search._search_steamgriddb("Anything", "bad-key") == []
+
+
+def test_thegamesdb_search_without_key_returns_empty(temp_data_dir):
+    from backend import covers as cover_search
+    assert cover_search._search_thegamesdb("Zelda", None) == []
+
+
+def test_thegamesdb_search_parses_front_boxart(monkeypatch, temp_data_dir):
+    """Two-step flow: ByGameName returns game ids, then Games/Images returns
+    boxart keyed by game id. Only front boxart is kept, joined with the
+    original base_url."""
+    from backend import covers as cover_search
+
+    calls = {"n": 0}
+
+    class FakeResp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"code": 200, "data": {"games": [{"id": 1, "game_title": "Celeste"}]}}
+            return {"code": 200, "data": {
+                "base_url": {"original": "https://cdn.thegamesdb.net/images/original/"},
+                "boxart": {"1": [
+                    {"type": "boxart", "side": "front", "filename": "boxart/front/1-1.jpg"},
+                    {"type": "boxart", "side": "back", "filename": "boxart/back/1-1.jpg"},
+                ]},
+            }}
+
+    monkeypatch.setattr(cover_search.requests, "get", lambda *a, **k: FakeResp())
+    results = cover_search._search_thegamesdb("Celeste", "tgdb-key")
+    assert len(results) == 1
+    assert results[0]["source"] == "thegamesdb"
+    assert results[0]["cover_url"] == "https://cdn.thegamesdb.net/images/original/boxart/front/1-1.jpg"
+    assert results[0]["fallback_url"] is None
+
+
+def test_thegamesdb_search_handles_network_failure_gracefully(monkeypatch, temp_data_dir):
+    from backend import covers as cover_search
+    import requests as req_module
+
+    def boom(*a, **k):
+        raise req_module.RequestException("down")
+    monkeypatch.setattr(cover_search.requests, "get", boom)
+    assert cover_search._search_thegamesdb("Anything", "fake-key") == []
+
+
+def test_thegamesdb_search_handles_api_error_code(monkeypatch, temp_data_dir):
+    from backend import covers as cover_search
+
+    class FakeResp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            return {"code": 401, "status": "Invalid API Key"}
+
+    monkeypatch.setattr(cover_search.requests, "get", lambda *a, **k: FakeResp())
+    assert cover_search._search_thegamesdb("Anything", "bad-key") == []
+
+
+def test_cover_search_merges_all_configured_providers(monkeypatch, temp_data_dir):
+    """A keyed source with no key is silently skipped, and every configured
+    key adds its candidates to the merged, re-ranked result set."""
+    from backend import covers as cover_search
+
+    monkeypatch.setattr(cover_search, "_search_steam", lambda q: [])
+    monkeypatch.setattr(cover_search, "_search_steamgriddb",
+                        lambda q, k: [{"name": q, "source": "steamgriddb",
+                                      "cover_url": "http://fake/sgdb.png", "fallback_url": None}])
+    monkeypatch.setattr(cover_search, "_search_rawg",
+                        lambda q, k: [{"name": q, "source": "rawg",
+                                      "cover_url": "http://fake/rawg.jpg", "fallback_url": None}])
+    monkeypatch.setattr(cover_search, "_search_giantbomb",
+                        lambda q, k: [{"name": q, "source": "giantbomb",
+                                      "cover_url": "http://fake/gb.jpg", "fallback_url": None}])
+    monkeypatch.setattr(cover_search, "_search_thegamesdb",
+                        lambda q, k: [{"name": q, "source": "thegamesdb",
+                                      "cover_url": "http://fake/tgdb.jpg", "fallback_url": None}])
+    results = cover_search.search_cover_candidates(
+        "Celeste", steamgriddb_api_key="k1", rawg_api_key="k2",
+        giantbomb_api_key="k3", thegamesdb_api_key="k4")
+    sources = {r["source"] for r in results}
+    assert sources == {"steamgriddb", "rawg", "giantbomb", "thegamesdb"}
 
 
 def test_wikipedia_search_uses_combined_query_and_parses_pageimages(monkeypatch, temp_data_dir):

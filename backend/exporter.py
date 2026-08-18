@@ -11,9 +11,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
 from .db import get_conn, load_config, COVERS_DIR
-
-MONTH_ORDER = ["Janvier", "Fevrier", "Février", "Mars", "Avril", "Mai", "Juin",
-               "Juillet", "Aout", "Août", "Septembre", "Octobre", "Novembre", "Décembre"]
+from .dateutils import month_number_to_name
 
 HEADER_FILL = PatternFill(start_color="FF7C5CFF", end_color="FF7C5CFF", fill_type="solid")
 HEADER_FONT = Font(color="FFFFFFFF", bold=True)
@@ -210,7 +208,7 @@ def build_complete_df():
             "TEMPS ESTIME (h)": r["hours_estimated"],
             "TEMPS PRIS (h)": r["hours_played"],
             "DUREE ?": r["duration_label"],
-            "MOIS FINI": r["month_finished"],
+            "MOIS FINI": month_number_to_name(r["month_finished"]),
             "WORTH IT?": r["worth_it"],
             "Note (/10)": r["rating"],
             "Disponible ?": {1: "Yes", 0: "No"}.get(r["available"], None),

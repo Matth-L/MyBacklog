@@ -228,10 +228,12 @@ def cancel_scan():
 
 
 def _scan_worker(allow_external: bool):
+    # One connection kept open for the whole scan: the old code opened,
+    # committed, and closed a fresh SQLite connection on every single game,
+    # which is wasteful and can be slow on large libraries.
     conn = get_conn()
     games = conn.execute("SELECT id, title FROM games").fetchall()
     cached = {r["game_id"]: r for r in conn.execute("SELECT * FROM name_sanitization").fetchall()}
-    conn.close()
 
     with _scan_lock:
         _scan_state.update({"total": len(games), "done": 0, "suggested": 0, "current": None})
@@ -256,7 +258,7 @@ def _scan_worker(allow_external: bool):
         except Exception:
             suggestion, source = None, None
 
-        conn = get_conn()
+        # Reuse the single scan connection rather than opening one per game.
         if suggestion:
             conn.execute(
                 """INSERT INTO name_sanitization (game_id, name_hash, status, suggested_name, source, checked_at)
@@ -280,12 +282,16 @@ def _scan_worker(allow_external: bool):
                 (g["id"], current_hash),
             )
         conn.commit()
-        conn.close()
 
         with _scan_lock:
             _scan_state["done"] += 1
         if source == "external":
             time.sleep(SCAN_DELAY_SECONDS)
+
+    try:
+        conn.close()
+    except Exception:
+        pass
 
     with _scan_lock:
         _scan_state["running"] = False

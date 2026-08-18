@@ -21,7 +21,7 @@ from backend import hltb
 from backend import duplicates as dup_mgr
 from backend import sanitize as sanitize_mgr
 from backend import applog
-from backend.dateutils import month_year_from_iso
+from backend.dateutils import month_year_from_iso, month_name_to_number
 
 # Silence Werkzeug's per-request access log (every GET/POST line) — only the
 # clean, curated events logged via backend.applog are printed. Errors still
@@ -73,7 +73,7 @@ def setup_import():
             saved[key] = str(path)
 
     if not saved:
-        return jsonify({"error": "Aucun fichier reçu. Envoyez un .xlsx ou les 3 .csv."}), 400
+        return jsonify({"error": "no_file_received"}), 400
 
     try:
         summary = import_all(
@@ -83,7 +83,7 @@ def setup_import():
             complete_csv=saved.get("complete_csv"),
         )
     except Exception as e:
-        return jsonify({"error": f"Erreur pendant l'import : {e}"}), 400
+        return jsonify({"error": "import_failed", "detail": str(e)}), 400
 
     cfg = load_config()
     cfg["configured"] = True
@@ -115,10 +115,10 @@ def _do_session_import(path: str):
     try:
         summary = session_mgr.import_new_session(path)
     except session_mgr.SessionImportError as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": "import_failed", "detail": str(e)}), 400
     except Exception as e:
         applog.error(f"Session import failed: {e}")
-        return jsonify({"error": f"Import failed: {e}"}), 400
+        return jsonify({"error": "import_failed", "detail": str(e)}), 400
     applog.info(f"Session import from: {path}")
     duplicates = dup_mgr.find_duplicates()
     if duplicates:
@@ -136,7 +136,7 @@ def session_import():
     data = request.get_json(force=True) or {}
     path = (data.get("path") or "").strip()
     if not path:
-        return jsonify({"error": "A file path is required."}), 400
+        return jsonify({"error": "file_path_required"}), 400
     return _do_session_import(path)
 
 
@@ -146,10 +146,10 @@ def session_import_file():
     a file from a browser file input instead of typing a filesystem path."""
     f = request.files.get("file")
     if not f or not f.filename:
-        return jsonify({"error": "No file received."}), 400
+        return jsonify({"error": "no_file_received"}), 400
     ext = Path(f.filename).suffix.lower()
     if ext not in (".xlsx", ".zip"):
-        return jsonify({"error": "Only .xlsx or .zip (exported session) files are supported."}), 400
+        return jsonify({"error": "unsupported_session_format"}), 400
     dest = UPLOAD_TMP / secure_filename(f.filename)
     f.save(dest)
     try:
@@ -227,8 +227,13 @@ FIELDS = ["title", "status", "cover_path", "dlc", "abandoned", "available", "hou
 
 def _apply_derived_date(data: dict):
     """If an exact completion date is provided, automatically derives the
-    month/year (in French) from it, rather than leaving a disconnected
-    counter to fill in by hand."""
+    month (1-12) and year from it, rather than leaving a disconnected
+    counter to fill in by hand. The month is stored as a number so the data
+    stays language-agnostic; the frontend translates it for display."""
+    # Normalize a legacy French month name (e.g. on a PUT carrying old data)
+    # to a number once, here, so everything downstream deals with ints.
+    if data.get("month_finished") and not str(data["month_finished"]).isdigit():
+        data["month_finished"] = month_name_to_number(data["month_finished"])
     if data.get("date_completed"):
         month, year = month_year_from_iso(data["date_completed"])
         if month:
@@ -240,7 +245,7 @@ def _apply_derived_date(data: dict):
 def create_game():
     data = request.get_json(force=True)
     if not data.get("title"):
-        return jsonify({"error": "Le titre est obligatoire"}), 400
+        return jsonify({"error": "title_required"}), 400
     data.setdefault("status", "backlog")
 
     if not data.get("force_duplicate"):
@@ -297,7 +302,7 @@ def update_game(game_id):
     _apply_derived_date(data)
     cols = [f for f in FIELDS if f in data]
     if not cols:
-        return jsonify({"error": "rien à mettre à jour"}), 400
+        return jsonify({"error": "nothing_to_update"}), 400
     set_clause = ", ".join(f"{c} = ?" for c in cols)
     conn = get_conn()
     conn.execute(
@@ -335,7 +340,7 @@ def fetch_hltb(game_id):
 
     hours = hltb.fetch_estimated_hours(game["title"], mode)
     if hours is None:
-        return jsonify({"error": "No HowLongToBeat match found for this title.", "code": "no_match"}), 404
+        return jsonify({"error": "no_hltb_match", "code": "no_match"}), 404
 
     conn = get_conn()
     conn.execute(
@@ -397,13 +402,13 @@ def _cover_url(filename):
 def upload_cover(game_id):
     f = request.files.get("cover")
     if not f or not f.filename:
-        return jsonify({"error": "aucune image"}), 400
+        return jsonify({"error": "no_image"}), 400
     ext = Path(f.filename).suffix.lower()
     if ext not in cover_search.IMAGE_EXTENSIONS:
-        return jsonify({"error": "format non supporté"}), 400
+        return jsonify({"error": "unsupported_format"}), 400
     content = f.read()
     if not cover_search.is_valid_image(content):
-        return jsonify({"error": "le fichier envoyé n'est pas une image valide"}), 400
+        return jsonify({"error": "invalid_image"}), 400
     game = conn_fetch_one("SELECT title FROM games WHERE id = ?", (game_id,))
     filename = cover_search.safe_title_filename(game["title"] if game else "jeu", game_id, ext)
     path = COVERS_DIR / filename
@@ -482,7 +487,7 @@ def link_orphan_review(orphan_id):
     target_game = conn.execute("SELECT id FROM games WHERE id = ?", (game_id,)).fetchone()
     if not target_game:
         conn.close()
-        return jsonify({"error": "target game not found"}), 404
+        return jsonify({"error": "target_game_not_found"}), 404
     conn.execute("UPDATE games SET review = ? WHERE id = ?", (orphan["review"], game_id))
     conn.execute("UPDATE orphan_reviews SET linked_game_id = ? WHERE id = ?", (game_id, orphan_id))
     conn.commit()
@@ -527,7 +532,7 @@ def sanitize_scan():
     allow_external = bool(data.get("allow_external", True))
     started = sanitize_mgr.start_scan(allow_external=allow_external)
     if not started:
-        return jsonify({"error": "A scan is already running."}), 409
+        return jsonify({"error": "scan_already_running"}), 409
     applog.info("Sanitize Game Names scan started.")
     return jsonify({"ok": True})
 
@@ -584,6 +589,8 @@ def get_settings():
         "player_name": cfg.get("player_name", ""),
         "rawg_api_key": cfg.get("rawg_api_key", ""),
         "giantbomb_api_key": cfg.get("giantbomb_api_key", ""),
+        "steamgriddb_api_key": cfg.get("steamgriddb_api_key", ""),
+        "thegamesdb_api_key": cfg.get("thegamesdb_api_key", ""),
         "internet_search_consent": bool(cfg.get("internet_search_consent", False)),
         "cover_scan_notice_dismissed": bool(cfg.get("cover_scan_notice_dismissed", False)),
     })
@@ -599,6 +606,10 @@ def update_settings():
         cfg["rawg_api_key"] = (data["rawg_api_key"] or "").strip()
     if "giantbomb_api_key" in data:
         cfg["giantbomb_api_key"] = (data["giantbomb_api_key"] or "").strip()
+    if "steamgriddb_api_key" in data:
+        cfg["steamgriddb_api_key"] = (data["steamgriddb_api_key"] or "").strip()
+    if "thegamesdb_api_key" in data:
+        cfg["thegamesdb_api_key"] = (data["thegamesdb_api_key"] or "").strip()
     if "internet_search_consent" in data:
         cfg["internet_search_consent"] = bool(data["internet_search_consent"])
     save_config(cfg)
@@ -611,7 +622,10 @@ def cover_search_route():
     title = request.args.get("title", "")
     cfg = load_config()
     return jsonify(cover_search.search_with_local(
-        title, rawg_api_key=cfg.get("rawg_api_key"), giantbomb_api_key=cfg.get("giantbomb_api_key"),
+        title, rawg_api_key=cfg.get("rawg_api_key"),
+        giantbomb_api_key=cfg.get("giantbomb_api_key"),
+        steamgriddb_api_key=cfg.get("steamgriddb_api_key"),
+        thegamesdb_api_key=cfg.get("thegamesdb_api_key"),
     ))
 
 
@@ -625,13 +639,13 @@ def cover_proxy():
     editor can open has to come back through our own origin first."""
     url = request.args.get("url")
     if not url:
-        return jsonify({"error": "url requise"}), 400
+        return jsonify({"error": "url_required"}), 400
     try:
         resp = requests.get(url, timeout=cover_search.TIMEOUT)
     except requests.RequestException:
-        return jsonify({"error": "download failed"}), 502
+        return jsonify({"error": "download_failed"}), 502
     if resp.status_code != 200 or not cover_search.is_valid_image(resp.content):
-        return jsonify({"error": "invalid image"}), 502
+        return jsonify({"error": "invalid_image"}), 502
     content_type = resp.headers.get("content-type") or "image/jpeg"
     if not content_type.startswith("image/"):
         content_type = "image/jpeg"
@@ -648,7 +662,7 @@ def set_cover_from_url(game_id):
     base = COVERS_DIR / cover_search.safe_title_filename(game["title"] if game else "jeu", game_id, "")
     dest = cover_search.download_image_with_detected_ext(url, base)
     if not dest:
-        return jsonify({"error": "échec du téléchargement ou fichier invalide"}), 502
+        return jsonify({"error": "download_failed"}), 502
     cover_path = _cover_url(dest.name)
     conn = get_conn()
     conn.execute("UPDATE games SET cover_path = ? WHERE id = ?", (cover_path, game_id))
@@ -664,12 +678,12 @@ def set_cover_from_local(game_id):
     data = request.get_json(force=True)
     filename_in = data.get("filename")
     if not filename_in or "/" in filename_in or ".." in filename_in:
-        return jsonify({"error": "nom de fichier invalide"}), 400
+        return jsonify({"error": "invalid_filename"}), 400
     src = cover_search.COVER_ART_DIR / filename_in
     if not src.exists():
-        return jsonify({"error": "fichier introuvable dans cover_art/"}), 404
+        return jsonify({"error": "cover_art_not_found"}), 404
     if not cover_search.is_valid_image(src):
-        return jsonify({"error": "ce fichier n'est pas une image valide"}), 400
+        return jsonify({"error": "invalid_image"}), 400
     game = conn_fetch_one("SELECT title FROM games WHERE id = ?", (game_id,))
     filename = cover_search.safe_title_filename(game["title"] if game else "jeu", game_id, src.suffix.lower())
     dest = COVERS_DIR / filename
@@ -715,7 +729,7 @@ def make_backup():
 def restore_backup_route(name):
     ok = backup_mgr.restore_backup(name)
     if not ok:
-        return jsonify({"error": "sauvegarde introuvable"}), 404
+        return jsonify({"error": "backup_not_found"}), 404
     return jsonify({"ok": True})
 
 
@@ -735,10 +749,10 @@ def year_review_years():
 def year_review():
     year = request.args.get("year")
     if not year:
-        return jsonify({"error": "année requise"}), 400
+        return jsonify({"error": "year_required"}), 400
     result = build_year_review(int(year))
     if result is None:
-        return jsonify({"error": "aucun jeu fini cette année-là"}), 404
+        return jsonify({"error": "no_games_year"}), 404
     return jsonify(result)
 
 
@@ -799,7 +813,7 @@ def handle_uncaught_error(e):
     if isinstance(e, HTTPException):
         return e
     applog.error(f"Unhandled error on {request.method} {request.path}: {e}")
-    return jsonify({"error": "Internal server error."}), 500
+    return jsonify({"error": "internal_error"}), 500
 
 
 def _open_browser():
