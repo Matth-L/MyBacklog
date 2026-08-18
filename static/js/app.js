@@ -1203,7 +1203,7 @@ async function renderGrid(status, query, availableFilter, yearFilter, dlcFilter,
   renderChronoArrow(status);
 
   const addTileHtml = `
-    <div class="tile tile-add" id="add-tile">
+    <div class="tile tile-add" id="add-tile-${status}">
       <span class="plus">+</span><span>${t("addTile")}</span>
     </div>`;
 
@@ -1232,7 +1232,8 @@ async function renderGrid(status, query, availableFilter, yearFilter, dlcFilter,
 
   gridEl.innerHTML = specialStart + gamesHtml + specialEnd;
 
-  document.getElementById("add-tile").addEventListener("click", () => openGameModal(null, status));
+  const addTileEl = gridEl.querySelector(`#add-tile-${status}`);
+  if (addTileEl) addTileEl.addEventListener("click", () => openGameModal(null, status));
 
   gridEl.querySelectorAll(".tile[data-id]").forEach(tile => {
     tile.addEventListener("click", () => {
@@ -1307,7 +1308,6 @@ function openGameModal(game, status) {
         <input type="number" step="0.5" id="f-hours-played" value="${g.hours_played ?? ""}">
       </div>
     </div>
-    ${!isNew ? `
     <div class="field hltb-fetch-row ${g.hours_estimated ? "hidden" : ""}">
       <label>${t("modalHltbLabel")}</label>
       <div style="display:flex; gap:8px; align-items:center;">
@@ -1316,10 +1316,10 @@ function openGameModal(game, status) {
           <option value="main_extra">${t("hltbModeMainExtra")}</option>
           <option value="completionist">${t("hltbModeCompletionist")}</option>
         </select>
-        <button class="btn btn-outline btn-sm" id="hltb-fetch-btn" style="margin-bottom:0;">${t("modalHltbFetchBtn")}</button>
+        <button class="btn btn-outline btn-sm" id="hltb-fetch-btn" style="margin-bottom:0;" ${isNew && !g.title ? "disabled" : ""}>${t("modalHltbFetchBtn")}</button>
       </div>
       <p id="hltb-status" class="hint"></p>
-    </div>` : ""}
+    </div>
     <div class="field-row">
       <div class="field">
         <label>${t("modalAvailable")}</label>
@@ -1566,6 +1566,7 @@ function bindModalEvents(g, status, isNew, isCompleted) {
   const hltbFetchBtn = document.getElementById("hltb-fetch-btn");
   const hltbRow = document.querySelector(".hltb-fetch-row");
   const hoursEstInput = document.getElementById("f-hours-est");
+  const titleInput = document.getElementById("f-title");
   if (hoursEstInput && hltbRow) {
     // Purely client-side visibility toggle — no request is made here, only
     // when the user actually clicks "Fetch HowLongToBeat" below. This lets
@@ -1576,8 +1577,16 @@ function bindModalEvents(g, status, isNew, isCompleted) {
       hltbRow.classList.toggle("hidden", !isEmpty);
       if (isEmpty) {
         document.getElementById("hltb-status").textContent = "";
-        if (hltbFetchBtn) hltbFetchBtn.disabled = false;
+        if (hltbFetchBtn) hltbFetchBtn.disabled = isNew && !titleInput.value.trim();
       }
+    });
+  }
+  if (isNew && titleInput && hltbFetchBtn) {
+    // For a brand-new game there's no saved title to key the lookup off of
+    // (and no id yet either — see the /api/hltb/lookup route), so the
+    // button just tracks whatever's currently typed into the title field.
+    titleInput.addEventListener("input", () => {
+      hltbFetchBtn.disabled = !titleInput.value.trim();
     });
   }
   if (hltbFetchBtn) hltbFetchBtn.addEventListener("click", async () => {
@@ -1585,7 +1594,9 @@ function bindModalEvents(g, status, isNew, isCompleted) {
     const statusEl = document.getElementById("hltb-status");
     hltbFetchBtn.disabled = true;
     const stopLoading = startLoadingDots(statusEl);
-    const res = await api.post(`/api/games/${g.id}/fetch-hltb`, { mode });
+    const res = isNew
+      ? await api.post(`/api/hltb/lookup`, { title: titleInput.value.trim(), mode })
+      : await api.post(`/api/games/${g.id}/fetch-hltb`, { mode });
     stopLoading();
     if (res.error) {
       statusEl.textContent = res.code === "no_match" ? t("hltbNoMatch") : errorText(res);

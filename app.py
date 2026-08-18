@@ -321,6 +321,29 @@ def update_game(game_id):
     return jsonify(_row_to_dict(row))
 
 
+@app.route("/api/hltb/lookup", methods=["POST"])
+def lookup_hltb():
+    """Same HowLongToBeat lookup as fetch_hltb below, but by a raw title
+    instead of a saved game id, and it never touches the DB. Lets the "new
+    game" modal offer the estimate while the game doesn't exist yet —
+    the value is only persisted when the user hits Save, same as every
+    other field in that form."""
+    data = request.get_json(force=True) or {}
+    title = (data.get("title") or "").strip()
+    mode = data.get("mode", "main")
+    if mode not in hltb.MODE_FIELDS:
+        return jsonify({"error": "invalid mode"}), 400
+    if not title:
+        return jsonify({"error": "no_hltb_match", "code": "no_match"}), 404
+
+    hours = hltb.fetch_estimated_hours(title, mode)
+    if hours is None:
+        return jsonify({"error": "no_hltb_match", "code": "no_match"}), 404
+
+    applog.info(f"HowLongToBeat estimate looked up for '{title}': {hours}h ({mode}).")
+    return jsonify({"hours_estimated": hours, "mode": mode})
+
+
 @app.route("/api/games/<int:game_id>/fetch-hltb", methods=["POST"])
 def fetch_hltb(game_id):
     """Fetches an estimated playtime from HowLongToBeat. Only ever called by
