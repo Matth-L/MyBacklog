@@ -402,6 +402,33 @@ def test_steamgriddb_search_handles_network_failure_gracefully(monkeypatch, temp
     assert cover_search._search_steamgriddb("Anything", "fake-key") == []
 
 
+def test_steamgriddb_search_encodes_title_in_url_path(monkeypatch, temp_data_dir):
+    """The search term sits in the URL *path* for this source (unlike every
+    other source, which passes it via `params=`), so it must be percent-
+    encoded by hand. A title with '/', '&', '?', or '#' would otherwise
+    split the path, get treated as a query string, or get truncated."""
+    from backend import covers as cover_search
+
+    seen_urls = []
+
+    class FakeResp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            return {"success": True, "data": []}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        seen_urls.append(url)
+        return FakeResp()
+
+    monkeypatch.setattr(cover_search.requests, "get", fake_get)
+    cover_search._search_steamgriddb("Bloons TD 6 & Friends / Deluxe?", "sgdb-key")
+    assert len(seen_urls) == 1
+    assert "/" not in seen_urls[0].split("/search/autocomplete/", 1)[1]
+    assert "&" not in seen_urls[0].split("/search/autocomplete/", 1)[1]
+    assert seen_urls[0].split("/search/autocomplete/", 1)[1].startswith("Bloons%20TD%206")
+
+
 def test_steamgriddb_search_skips_when_autocomplete_unsuccessful(monkeypatch, temp_data_dir):
     from backend import covers as cover_search
 

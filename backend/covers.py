@@ -27,6 +27,7 @@ import difflib
 import threading
 import requests
 from pathlib import Path
+from urllib.parse import quote
 from . import sequel_guard
 
 STORE_SEARCH_URL = "https://store.steampowered.com/api/storesearch/"
@@ -284,10 +285,16 @@ def _search_steamgriddb(query, api_key):
     if not api_key:
         return []
     headers = {"Authorization": f"Bearer {api_key}"}
-    # Step 1: resolve the searched name to SteamGridDB game ids.
+    # Step 1: resolve the searched name to SteamGridDB game ids. Unlike every
+    # other source here, the search term is part of the URL *path* rather
+    # than a query parameter, so it must be percent-encoded explicitly —
+    # `requests` only auto-encodes values passed via `params=`. Left
+    # unencoded, a title with a "/" (splits the path into extra segments),
+    # "?"/"#" (truncates the path early), or "&" would silently mis-fire or
+    # 404 instead of erroring loudly.
     try:
         resp = requests.get(
-            f"{STEAMGRIDDB_BASE_URL}/search/autocomplete/{query}",
+            f"{STEAMGRIDDB_BASE_URL}/search/autocomplete/{quote(query, safe='')}",
             headers=headers,
             timeout=TIMEOUT,
         )

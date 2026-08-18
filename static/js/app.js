@@ -1272,8 +1272,8 @@ function closeModal() {
   document.getElementById("game-modal").classList.add("hidden");
 }
 
-function openGameModal(game, status) {
-  const isNew = !game;
+function openGameModal(game, status, forceNew) {
+  const isNew = forceNew || !game;
   const g = game || {
     title: "", status, hours_estimated: null, hours_played: null, rating: 0, review: "",
     notes: "", available: status === "completed" ? 1 : null, worth_it: "", date_completed: "", dlc: 0, abandoned: 0,
@@ -1281,8 +1281,14 @@ function openGameModal(game, status) {
   const body = document.getElementById("modal-body");
   const isCompleted = (g.status || status) === "completed";
 
-  const coverHtml = !isNew ? `
-    <div class="modal-cover-small" style="background:${g.cover_path ? `url('${escapeHtml(g.cover_path)}') center/cover` : gradientFor(g.title || "?")}">
+  // For a new (unsaved) game there's no id yet, so a picked/uploaded cover
+  // can't be persisted server-side (every cover endpoint writes a file +
+  // DB row keyed by game id). Instead it's kept in memory as a Blob on `g`
+  // (g.__pendingCoverBlob) with an object URL for the preview, and only
+  // actually uploaded once saveGame() has created the row and has a real id.
+  const coverPreviewUrl = g.cover_path ? escapeHtml(g.cover_path) : (g.__pendingCoverUrl || null);
+  const coverHtml = `
+    <div class="modal-cover-small" style="background:${coverPreviewUrl ? `url('${coverPreviewUrl}') center/cover` : gradientFor(g.title || "?")}">
       ${g.dlc ? `<div class="tile-dlc-badge">DLC</div>` : ""}
     </div>
     <div class="modal-cover-actions">
@@ -1290,8 +1296,8 @@ function openGameModal(game, status) {
       <label class="btn btn-outline btn-sm" style="margin-bottom:0;text-align:center;">
         ${t("modalCoverUpload")}<input type="file" id="cover-upload-input" accept="image/*" style="display:none;">
       </label>
-      ${g.cover_path ? `<button class="btn btn-outline btn-sm" id="cover-edit-btn" style="margin-bottom:0;">${t("coverEditorEditBtn")}</button>` : ""}
-    </div>` : "";
+      ${!isNew && g.cover_path ? `<button class="btn btn-outline btn-sm" id="cover-edit-btn" style="margin-bottom:0;">${t("coverEditorEditBtn")}</button>` : ""}
+    </div>`;
 
   const commonFields = `
     <div class="field">
@@ -1418,7 +1424,12 @@ function openGameModal(game, status) {
     ${!isNew ? `<button class="btn btn-ghost btn-sm" id="switch-status-btn" style="margin-top:6px;">${isCompleted ? t("modalMoveToBacklog") : t("modalMoveToCompleted")}</button>` : ""}`;
 
   if (isNew) {
-    body.innerHTML = `<h3>${t("modalNewGameTitle")}</h3>` + commonFields + extraHtml + actionsHtml;
+    body.innerHTML = `<h3>${t("modalNewGameTitle")}</h3>
+      <div class="modal-top">
+        <div>${coverHtml}</div>
+        <div class="modal-fields-compact">${commonFields}${extraHtml}</div>
+      </div>
+      ${actionsHtml}`;
   } else {
     body.innerHTML = `
       <h3>${escapeHtml(g.title)}</h3>
@@ -1432,6 +1443,10 @@ function openGameModal(game, status) {
 
   document.getElementById("game-modal").classList.remove("hidden");
   bindModalEvents(g, status, isNew, isCompleted);
+  if (g.__draft) {
+    applyModalDraft(g.__draft);
+    delete g.__draft;
+  }
 }
 
 // ============================================================ Date picker helper (input[type=date] uses local YYYY-MM-DD, no manual typing needed)
@@ -1524,8 +1539,14 @@ function bindModalEvents(g, status, isNew, isCompleted) {
 
   const coverSearchBtn = document.getElementById("cover-search-btn");
   if (coverSearchBtn) coverSearchBtn.addEventListener("click", async () => {
+    // Sync whatever's currently typed in the title field before opening
+    // search — g.title is only set from the saved DB row (or, for a new
+    // game, the empty default) and is otherwise stale the moment the user
+    // types without saving first.
+    const liveTitle = document.getElementById("f-title").value.trim();
+    if (liveTitle) g.title = liveTitle;
     const consented = await ensureInternetConsent();
-    if (consented) openCoverSearchModal(g);
+    if (consented) openCoverSearchModal(g, status, isNew);
   });
   const coverUploadInput = document.getElementById("cover-upload-input");
   if (coverUploadInput) coverUploadInput.addEventListener("change", (e) => {
@@ -1534,14 +1555,19 @@ function bindModalEvents(g, status, isNew, isCompleted) {
     const objectUrl = URL.createObjectURL(f);
     openCoverEditor(objectUrl, async (blob) => {
       URL.revokeObjectURL(objectUrl);
-      const res = await uploadCoverBlob(g.id, blob);
-      if (res.cover_path) {
-        g.cover_path = res.cover_path;
+      if (isNew) {
+        setPendingCover(g, blob);
         showToast(t("coverUpdatedToast"), "success");
-        document.querySelector(".modal-cover-small").style.background = `url('${res.cover_path}') center/cover`;
-        refreshCurrentView();
       } else {
-        showToast(errorText(res) || t("coverSearchFailedToast"), "warning");
+        const res = await uploadCoverBlob(g.id, blob);
+        if (res.cover_path) {
+          g.cover_path = res.cover_path;
+          showToast(t("coverUpdatedToast"), "success");
+          document.querySelector(".modal-cover-small").style.background = `url('${res.cover_path}') center/cover`;
+          refreshCurrentView();
+        } else {
+          showToast(errorText(res) || t("coverSearchFailedToast"), "warning");
+        }
       }
     });
     coverUploadInput.value = ""; // allow re-selecting the same file later
@@ -1717,6 +1743,18 @@ async function saveGame(g, status, isNew, isCompleted, forceDuplicate) {
     return saveGame(g, status, isNew, isCompleted, true);
   }
 
+  // A cover picked/uploaded before the game existed was only kept in memory
+  // (see setPendingCover) — now that the row is created and we finally have
+  // a real id, actually upload it. A failure here shouldn't block the save
+  // that already succeeded; just let the user know.
+  if (isNew && g.__pendingCoverBlob && res.id) {
+    const coverRes = await uploadCoverBlob(res.id, g.__pendingCoverBlob);
+    URL.revokeObjectURL(g.__pendingCoverUrl);
+    if (!coverRes.cover_path) {
+      showToast(errorText(coverRes) || t("coverSearchFailedToast"), "warning");
+    }
+  }
+
   closeModal();
   refreshCurrentView();
 }
@@ -1817,7 +1855,20 @@ function startLoadingDots(el, labelKey = "loadingLabel") {
 }
 
 // ============================================================ Cover search (style SteamGridDB, + correspondance locale)
-function openCoverSearchModal(g) {
+// Brand names for cover-art sources — used as a small badge on each result
+// so it's clear which site an image came from before picking it. Not
+// localized: these are all proper nouns, same in every language.
+const COVER_SOURCE_LABELS = {
+  steam: "Steam",
+  steamgriddb: "SteamGridDB",
+  rawg: "RAWG",
+  giantbomb: "Giant Bomb",
+  thegamesdb: "TheGamesDB",
+  wikipedia: "Wikipedia",
+};
+
+function openCoverSearchModal(g, status, isNew) {
+  const draft = captureModalDraft();
   const body = document.getElementById("modal-body");
   body.innerHTML = `
     <h3>${t("coverSearchTitle")}</h3>
@@ -1829,6 +1880,12 @@ function openCoverSearchModal(g) {
     <div id="cover-results" class="grid" style="grid-template-columns:repeat(auto-fill,minmax(110px,1fr));"></div>
     <button class="btn btn-ghost btn-block" id="cover-back-btn">← ${t("modalReviewCancel")}</button>
   `;
+  const backToGameModal = () => {
+    // Restore whatever the user had already typed before jumping into
+    // cover search (title, hours, etc.) — captured just above.
+    if (isNew) g.__draft = draft;
+    openGameModal(g, status || g.status, isNew);
+  };
   const editCoverFromSearch = (payload) => {
     // Both sources get resolved to a same-origin URL before opening the
     // editor: local matches are already served by our own app; online
@@ -1838,6 +1895,12 @@ function openCoverSearchModal(g) {
       ? `/api/cover-art-preview/${encodeURIComponent(payload.local_filename)}`
       : `/api/cover-proxy?url=${encodeURIComponent(payload.url)}`;
     openCoverEditor(sourceUrl, async (blob) => {
+      if (isNew) {
+        setPendingCover(g, blob);
+        showToast(t("coverUpdatedToast"), "success");
+        backToGameModal();
+        return;
+      }
       const res = await uploadCoverBlob(g.id, blob);
       if (res.cover_path) {
         g.cover_path = res.cover_path;
@@ -1883,6 +1946,7 @@ function openCoverSearchModal(g) {
     resultsEl.innerHTML = results.map((r, i) => `
       <div class="tile" data-url="${r.cover_url}" data-idx="${i}" style="aspect-ratio:2/3;">
         <img data-src="${r.cover_url}" data-fallback="${r.fallback_url || ""}" loading="lazy" style="width:100%;height:100%;object-fit:cover;">
+        ${r.source ? `<div class="cover-source-badge">${escapeHtml(COVER_SOURCE_LABELS[r.source] || r.source)}</div>` : ""}
       </div>`).join("");
 
     // Bounded error handling (never a loop): if the image fails, try at
@@ -1918,7 +1982,7 @@ function openCoverSearchModal(g) {
     });
   };
   document.getElementById("cover-query-btn").addEventListener("click", runSearch);
-  document.getElementById("cover-back-btn").addEventListener("click", () => openGameModal(g, g.status));
+  document.getElementById("cover-back-btn").addEventListener("click", backToGameModal);
   runSearch();
 }
 
@@ -2282,6 +2346,44 @@ async function uploadCoverBlob(gameId, blob) {
   const fd = new FormData();
   fd.append("cover", blob, "cover.png");
   return api.upload(`/api/games/${gameId}/cover`, fd);
+}
+
+// Stores a picked/uploaded cover on the in-memory draft `g` for a game that
+// doesn't exist in the DB yet (no id to upload against). Keeps a single
+// object URL alive at a time (revoking the previous one) for the modal's
+// live preview; the blob itself is actually uploaded from saveGame() right
+// after the game is created.
+function setPendingCover(g, blob) {
+  if (g.__pendingCoverUrl) URL.revokeObjectURL(g.__pendingCoverUrl);
+  g.__pendingCoverBlob = blob;
+  g.__pendingCoverUrl = URL.createObjectURL(blob);
+  const preview = document.querySelector(".modal-cover-small");
+  if (preview) preview.style.background = `url('${g.__pendingCoverUrl}') center/cover`;
+}
+
+// Captures every current input/select/textarea value in the modal (keyed by
+// id) so navigating from the "new game" form to cover search and back
+// doesn't lose whatever the user already typed in.
+function captureModalDraft() {
+  const draft = {};
+  document.querySelectorAll("#modal-body input[id], #modal-body select[id], #modal-body textarea[id]").forEach(el => {
+    if (el.type === "file") return; // can't be restored
+    draft[el.id] = el.type === "checkbox" ? { checked: el.checked } : { value: el.value };
+  });
+  return draft;
+}
+function applyModalDraft(draft) {
+  if (!draft) return;
+  Object.entries(draft).forEach(([id, v]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if ("checked" in v) el.checked = v.checked;
+    else el.value = v.value;
+    // Re-fire so listeners that react live to typing (hours-estimated
+    // clearing/filling the HLTB row, title enabling its fetch button, etc.)
+    // stay in sync after a value is restored programmatically.
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 }
 
 

@@ -150,3 +150,35 @@ def test_fetch_hltb_endpoint_rejects_invalid_mode(client):
     game_id = res.get_json()["id"]
     res = client.post(f"/api/games/{game_id}/fetch-hltb", json={"mode": "not-a-real-mode"})
     assert res.status_code == 400
+
+
+def test_hltb_lookup_by_title_does_not_require_a_saved_game(client, monkeypatch):
+    """Powers the estimate button in the "new game" modal, before the game
+    has been saved (and so has no id yet) — a plain title lookup, no DB
+    write."""
+    import app as app_module
+
+    monkeypatch.setattr(app_module.hltb, "fetch_estimated_hours", lambda title, mode: 12.5)
+    res = client.post("/api/hltb/lookup", json={"title": "Celeste", "mode": "main"})
+    assert res.status_code == 200
+    assert res.get_json()["hours_estimated"] == 12.5
+
+
+def test_hltb_lookup_by_title_returns_404_when_no_match(client, monkeypatch):
+    import app as app_module
+
+    monkeypatch.setattr(app_module.hltb, "fetch_estimated_hours", lambda title, mode: None)
+    res = client.post("/api/hltb/lookup", json={"title": "Totally Made Up Game Xyz", "mode": "main"})
+    assert res.status_code == 404
+    assert res.get_json()["code"] == "no_match"
+
+
+def test_hltb_lookup_by_title_returns_404_when_title_blank(client):
+    res = client.post("/api/hltb/lookup", json={"title": "  ", "mode": "main"})
+    assert res.status_code == 404
+    assert res.get_json()["code"] == "no_match"
+
+
+def test_hltb_lookup_by_title_rejects_invalid_mode(client):
+    res = client.post("/api/hltb/lookup", json={"title": "Celeste", "mode": "not-a-real-mode"})
+    assert res.status_code == 400
