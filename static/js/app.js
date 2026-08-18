@@ -2541,6 +2541,20 @@ async function openSettingsModal() {
       </div>
     </div>
     <div class="settings-section">
+      <h4>${t("settingsSteamgriddb")}</h4>
+      <div class="field">
+        <input type="text" id="steamgriddb-key-input" value="${settings.steamgriddb_api_key || ""}" placeholder="steamgriddb.com/profile/preferences">
+        <p class="hint">${t("settingsSteamgriddbHint")}</p>
+      </div>
+    </div>
+    <div class="settings-section">
+      <h4>${t("settingsThegamesdb")}</h4>
+      <div class="field">
+        <input type="text" id="thegamesdb-key-input" value="${settings.thegamesdb_api_key || ""}" placeholder="thegamesdb.net">
+        <p class="hint">${t("settingsThegamesdbHint")}</p>
+      </div>
+    </div>
+    <div class="settings-section">
       <h4>${t("settingsData")}</h4>
       <p class="hint">${t("settingsDataHint")}</p>
       <div class="field" style="margin-top:10px;">
@@ -2649,6 +2663,12 @@ async function openSettingsModal() {
   });
   document.getElementById("giantbomb-key-input").addEventListener("change", async (e) => {
     await api.post("/api/settings", { giantbomb_api_key: e.target.value.trim() });
+  });
+  document.getElementById("steamgriddb-key-input").addEventListener("change", async (e) => {
+    await api.post("/api/settings", { steamgriddb_api_key: e.target.value.trim() });
+  });
+  document.getElementById("thegamesdb-key-input").addEventListener("change", async (e) => {
+    await api.post("/api/settings", { thegamesdb_api_key: e.target.value.trim() });
   });
 
   document.getElementById("backup-now-btn").addEventListener("click", async () => {

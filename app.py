@@ -584,6 +584,8 @@ def get_settings():
         "player_name": cfg.get("player_name", ""),
         "rawg_api_key": cfg.get("rawg_api_key", ""),
         "giantbomb_api_key": cfg.get("giantbomb_api_key", ""),
+        "steamgriddb_api_key": cfg.get("steamgriddb_api_key", ""),
+        "thegamesdb_api_key": cfg.get("thegamesdb_api_key", ""),
         "internet_search_consent": bool(cfg.get("internet_search_consent", False)),
         "cover_scan_notice_dismissed": bool(cfg.get("cover_scan_notice_dismissed", False)),
     })
@@ -599,6 +601,10 @@ def update_settings():
         cfg["rawg_api_key"] = (data["rawg_api_key"] or "").strip()
     if "giantbomb_api_key" in data:
         cfg["giantbomb_api_key"] = (data["giantbomb_api_key"] or "").strip()
+    if "steamgriddb_api_key" in data:
+        cfg["steamgriddb_api_key"] = (data["steamgriddb_api_key"] or "").strip()
+    if "thegamesdb_api_key" in data:
+        cfg["thegamesdb_api_key"] = (data["thegamesdb_api_key"] or "").strip()
     if "internet_search_consent" in data:
         cfg["internet_search_consent"] = bool(data["internet_search_consent"])
     save_config(cfg)
@@ -611,7 +617,10 @@ def cover_search_route():
     title = request.args.get("title", "")
     cfg = load_config()
     return jsonify(cover_search.search_with_local(
-        title, rawg_api_key=cfg.get("rawg_api_key"), giantbomb_api_key=cfg.get("giantbomb_api_key"),
+        title, rawg_api_key=cfg.get("rawg_api_key"),
+        giantbomb_api_key=cfg.get("giantbomb_api_key"),
+        steamgriddb_api_key=cfg.get("steamgriddb_api_key"),
+        thegamesdb_api_key=cfg.get("thegamesdb_api_key"),
     ))
 
 

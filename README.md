@@ -70,10 +70,11 @@ Then open `http://localhost:5000`.
 Cover art search can query the following, only when you use it explicitly and only after you
 consent:
 
-- **Steam Grid DB** : public search, no key needed.
+- **Steam Grid DB** : free API key (optional, add it in Settings); skipped without one. Community-uploaded cover art in the exact portrait "grid" dimensions Steam uses.
 - **Steam Store** : public search, no key needed.
 - **RAWG.io** : free API key (optional, add it in Settings); skipped without one.
 - **Giant Bomb** : free API key (optional, add it in Settings); skipped without one.
+- **TheGamesDB** : free API key (optional, add it in Settings); skipped without one. Open, community-maintained database with strong retro/console box-art coverage.
 - **Wikipedia** : last-resort fallback if nothing else is found.
 
 *Steam is a trademark of Valve Corporation. RAWG.io, Giant Bomb, and Wikipedia belong to their

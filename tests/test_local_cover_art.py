@@ -114,7 +114,8 @@ def test_search_with_local_prefers_reporting_both_when_available(monkeypatch, te
 
     monkeypatch.setattr(
         cover_search, "search_cover_candidates",
-        lambda title, max_results=8, rawg_api_key=None, giantbomb_api_key=None: [
+        lambda title, max_results=8, rawg_api_key=None, giantbomb_api_key=None,
+               steamgriddb_api_key=None, thegamesdb_api_key=None: [
             {"name": "Celeste", "cover_url": "http://fake/cover.jpg", "fallback_url": "http://fake/hdr.jpg"}
         ],
     )
@@ -127,7 +128,8 @@ def test_search_with_local_handles_no_local_match(monkeypatch, temp_cover_art_di
     from backend import covers as cover_search
     monkeypatch.setattr(
         cover_search, "search_cover_candidates",
-        lambda title, max_results=8, rawg_api_key=None, giantbomb_api_key=None: [],
+        lambda title, max_results=8, rawg_api_key=None, giantbomb_api_key=None,
+               steamgriddb_api_key=None, thegamesdb_api_key=None: [],
     )
     result = cover_search.search_with_local("Un jeu quelconque")
     assert result["local_match"] is None
