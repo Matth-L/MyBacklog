@@ -55,11 +55,20 @@ CREATE TABLE IF NOT EXISTS name_sanitization (
     FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE
 );
 
--- 'status' and 'year_finished' are filtered on nearly every /api/games and
--- /api/stats query — cheap to keep indexed even at this app's modest scale,
--- and it matters once a library grows into the thousands of games.
-CREATE INDEX IF NOT EXISTS idx_games_status ON games(status);
+-- 'year_finished' is filtered on nearly every /api/stats and year-review
+-- query — cheap to keep indexed even at this app's modest scale, and it
+-- matters once a library grows into the thousands of games.
 CREATE INDEX IF NOT EXISTS idx_games_year_finished ON games(year_finished);
+-- Covers the actual hot path: every grid view filters by status, then sorts
+-- by priority/date_added in that exact order (see list_games() in app.py).
+-- With this index SQLite can satisfy "WHERE status=? ORDER BY priority DESC,
+-- date_added DESC" straight from the index instead of a full-table scan
+-- followed by a separate sort step. Its leftmost column (status) also
+-- covers every plain "WHERE status = ?" query elsewhere (stats, duplicate
+-- checks), so a separate single-column index on status would be redundant
+-- write overhead for no extra benefit.
+CREATE INDEX IF NOT EXISTS idx_games_status_priority_date
+    ON games(status, priority DESC, date_added DESC);
 """
 
 
@@ -67,6 +76,21 @@ def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # WAL lets readers and writers work concurrently instead of blocking on
+    # a single file lock (the default rollback-journal mode serializes
+    # every writer against every reader) — matters once more than one
+    # request can be in flight at a time (background bulk-cover-fill thread
+    # writing while the UI is still reading, multiple browser tabs, etc.).
+    conn.execute("PRAGMA journal_mode = WAL")
+    # NORMAL still fsyncs at WAL checkpoints (so a crash can't corrupt the
+    # database) but skips the extra fsync on every single commit that FULL
+    # does — safe with WAL specifically, and noticeably fewer disk syncs
+    # under the bulk-fill/import paths that write one row at a time.
+    conn.execute("PRAGMA synchronous = NORMAL")
+    # If a writer (e.g. the background cover bulk-fill thread) is mid-
+    # transaction, a request thread retries for up to 5s instead of
+    # immediately raising "database is locked".
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 
@@ -87,6 +111,13 @@ def _migrate(conn):
         conn.execute("ALTER TABLE orphan_reviews ADD COLUMN alternative_game_ids TEXT")
 
     _migrate_months_to_numbers(conn)
+
+    # The old single-column status index is now redundant: the composite
+    # idx_games_status_priority_date index (added below in SCHEMA) already
+    # covers plain "WHERE status = ?" lookups via its leftmost column, so
+    # keeping both just pays index-maintenance cost on every write for no
+    # extra read benefit.
+    conn.execute("DROP INDEX IF EXISTS idx_games_status")
 
 
 def _migrate_months_to_numbers(conn):

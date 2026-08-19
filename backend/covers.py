@@ -540,8 +540,38 @@ def search_cover_candidates(title: str, max_results: int = 8, rawg_api_key: str 
         # configured...): last resort, less precise but broader coverage.
         _add_all(_search_wikipedia(variants[0]))
 
-    merged.sort(key=lambda it: _similarity(title, it.get("name") or ""), reverse=True)
-    return merged[:max_results]
+    # Rank each source's own matches by similarity, then interleave them
+    # round-robin (best Steam match, best SteamGridDB match, best RAWG
+    # match, ..., then each source's 2nd-best, and so on) instead of
+    # sorting the whole merged pool by similarity and truncating. Steam
+    # needs no key and tends to return many close string matches on its
+    # own, so a flat sort-then-truncate could silently fill every one of
+    # the `max_results` slots with Steam hits — even with several other
+    # sources configured and returning perfectly good candidates — simply
+    # because Steam happened to have more near-exact name matches. This
+    # guarantees every source that found *something* gets a fair shot at
+    # showing up in what the user actually sees.
+    by_source = {}
+    for it in merged:
+        by_source.setdefault(it.get("source"), []).append(it)
+    for items in by_source.values():
+        items.sort(key=lambda it: _similarity(title, it.get("name") or ""), reverse=True)
+
+    sources_in_order = list(by_source.keys())
+    interleaved = []
+    rank = 0
+    while len(interleaved) < len(merged):
+        added = False
+        for src in sources_in_order:
+            bucket = by_source[src]
+            if rank < len(bucket):
+                interleaved.append(bucket[rank])
+                added = True
+        rank += 1
+        if not added:
+            break
+
+    return interleaved[:max_results]
 
 
 def search_with_local(title: str, max_results: int = 8, rawg_api_key: str = None,

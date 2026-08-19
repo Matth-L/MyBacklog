@@ -526,6 +526,32 @@ def test_cover_search_merges_all_configured_providers(monkeypatch, temp_data_dir
     assert sources == {"steamgriddb", "rawg", "giantbomb", "thegamesdb"}
 
 
+def test_cover_search_does_not_let_one_source_crowd_out_the_others(monkeypatch, temp_data_dir):
+    """Regression test: Steam needs no key and can return many close string
+    matches on its own. A naive 'merge everything, sort by similarity,
+    truncate to max_results' would let Steam alone fill every slot even
+    when other configured sources found perfectly good (if slightly less
+    textually similar) candidates — silently hiding every other source
+    from the results the user actually sees."""
+    from backend import covers as cover_search
+
+    # Steam "wins" on pure string similarity for every one of its 6 hits...
+    monkeypatch.setattr(cover_search, "_search_steam", lambda q: [
+        {"name": "Celeste", "source": "steam", "appid": i,
+         "cover_url": f"http://fake/steam{i}.jpg", "fallback_url": None}
+        for i in range(6)
+    ])
+    # ...while SteamGridDB only has one, slightly-less-similar-named hit.
+    monkeypatch.setattr(cover_search, "_search_steamgriddb", lambda q, k: [
+        {"name": "Celeste (Special Edition)", "source": "steamgriddb",
+         "cover_url": "http://fake/sgdb.png", "fallback_url": None}
+    ])
+    results = cover_search.search_cover_candidates("Celeste", max_results=4, steamgriddb_api_key="k1")
+    sources = {r["source"] for r in results}
+    assert "steamgriddb" in sources, "SteamGridDB's result got crowded out by Steam's volume"
+    assert "steam" in sources
+
+
 def test_wikipedia_search_uses_combined_query_and_parses_pageimages(monkeypatch, temp_data_dir):
     """The Wikipedia fallback should pull image + search in a single request
     (generator=search + pageimages) rather than one search call followed by

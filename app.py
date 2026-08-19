@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import gzip
 import logging
 import threading
 import webbrowser
@@ -40,6 +41,48 @@ UPLOAD_TMP = DATA_DIR / "uploads_tmp"
 UPLOAD_TMP.mkdir(parents=True, exist_ok=True)
 
 init_db()
+
+# ----------------------------------------------------------------- Response compression
+# Every /api/games response ships the full row for every game (including
+# free-form review/notes text), and app.js alone is ~190KB — both are highly
+# repetitive text that gzip shrinks dramatically (typically 70-90%). Rather
+# than pull in an extra dependency (Flask-Compress) for what's a fairly
+# small transform, this compresses in place for any client that says it
+# accepts gzip.
+_COMPRESSIBLE_MIMETYPES = {
+    "application/json", "text/html", "text/css", "text/javascript",
+    "application/javascript", "image/svg+xml", "text/plain", "text/xml",
+}
+_COMPRESS_MIN_BYTES = 500  # below this, gzip's own overhead isn't worth it
+
+
+@app.after_request
+def compress_response(response):
+    if response.direct_passthrough:
+        # Set by send_file/send_from_directory for on-disk files (cover
+        # images, xlsx/zip exports...) — already binary/pre-compressed
+        # formats, and re-reading the body here would defeat the point of
+        # passthrough streaming in the first place.
+        return response
+    if response.mimetype not in _COMPRESSIBLE_MIMETYPES:
+        return response
+    if "gzip" not in request.headers.get("Accept-Encoding", "").lower():
+        return response
+    if response.headers.get("Content-Encoding"):
+        return response  # already encoded upstream; don't double-compress
+    data = response.get_data()
+    if len(data) < _COMPRESS_MIN_BYTES:
+        return response
+    response.set_data(gzip.compress(data, compresslevel=6))
+    response.headers["Content-Encoding"] = "gzip"
+    response.headers["Content-Length"] = str(len(response.get_data()))
+    # Tells any cache (browser, proxy) that the response body differs by
+    # this header, so a gzip-encoded response is never served to a client
+    # that didn't ask for it.
+    vary = response.headers.get("Vary")
+    response.headers["Vary"] = f"{vary}, Accept-Encoding" if vary else "Accept-Encoding"
+    return response
+
 
 # ----------------------------------------------------------------- Frontend
 @app.route("/")
@@ -453,8 +496,15 @@ def conn_fetch_one(sql, params=()):
 
 @app.route("/api/covers/<path:filename>")
 def get_cover(filename):
+    # cover_path is always stored as "/api/covers/<file>?v=<timestamp>" (see
+    # _cover_url below) and that query param changes every single time the
+    # cover is replaced — so this exact URL can never point at stale
+    # content. "no-cache" was forcing a conditional-GET round trip for
+    # every cover thumbnail on every grid render for no benefit; a long,
+    # immutable cache lets the browser skip the network entirely on repeat
+    # views (switching tabs, reopening the app, ...).
     resp = send_from_directory(COVERS_DIR, filename)
-    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return resp
 
 

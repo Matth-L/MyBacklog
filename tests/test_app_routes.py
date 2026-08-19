@@ -101,14 +101,34 @@ def test_replacing_a_cover_produces_a_different_url_to_bust_the_browser_cache(cl
     assert cover_path_1.split("?")[0] == cover_path_2.split("?")[0]
 
 
-def test_cover_endpoint_sends_no_cache_header(client):
+def test_cover_endpoint_sends_long_lived_immutable_cache_header(client):
+    """cover_path always carries a fresh ?v=<timestamp> (see _cover_url), so
+    the exact URL returned here can never point at stale content — safe (and
+    much cheaper, especially over a full grid of thumbnails) to cache
+    aggressively instead of forcing a revalidation round trip every time."""
     from io import BytesIO
     game = client.post("/api/games", json={"title": "Jeu cache", "status": "completed"}).get_json()
     img = (BytesIO(_make_test_image_bytes()), "cover.jpg")
     res = client.post(f"/api/games/{game['id']}/cover", data={"cover": img}, content_type="multipart/form-data")
     cover_path = res.get_json()["cover_path"]
+    assert "?v=" in cover_path
     cover_res = client.get(cover_path)
-    assert cover_res.headers.get("Cache-Control") == "no-cache"
+    assert cover_res.headers.get("Cache-Control") == "public, max-age=31536000, immutable"
+
+
+def test_json_responses_are_gzip_compressed_when_client_accepts_it(client):
+    client.post("/api/games", json={"title": "Compression Test", "status": "backlog", "notes": "x" * 2000})
+    res = client.get("/api/games", headers={"Accept-Encoding": "gzip"})
+    assert res.headers.get("Content-Encoding") == "gzip"
+    assert res.headers.get("Vary") == "Accept-Encoding"
+    import gzip as gzip_module
+    decoded = gzip_module.decompress(res.data)
+    assert b"Compression Test" in decoded
+
+
+def test_json_responses_are_not_compressed_without_accept_encoding(client):
+    res = client.get("/api/games")
+    assert res.headers.get("Content-Encoding") is None
 
 
 # ------------------------------------------------------------- Orphan reviews (import validation)
