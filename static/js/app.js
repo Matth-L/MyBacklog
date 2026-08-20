@@ -2801,18 +2801,41 @@ async function openSettingsModal() {
     });
   });
 
-  document.getElementById("rawg-key-input").addEventListener("change", async (e) => {
-    await api.post("/api/settings", { rawg_api_key: e.target.value.trim() });
-  });
-  document.getElementById("giantbomb-key-input").addEventListener("change", async (e) => {
-    await api.post("/api/settings", { giantbomb_api_key: e.target.value.trim() });
-  });
-  document.getElementById("steamgriddb-key-input").addEventListener("change", async (e) => {
-    await api.post("/api/settings", { steamgriddb_api_key: e.target.value.trim() });
-  });
-  document.getElementById("thegamesdb-key-input").addEventListener("change", async (e) => {
-    await api.post("/api/settings", { thegamesdb_api_key: e.target.value.trim() });
-  });
+  // Each key field only saves on the native "change" event (fires on
+  // blur-after-edit) — there's no <form> here for Enter to submit against,
+  // and the POST itself previously had zero visible feedback either way.
+  // That combination made "I pasted my key and nothing happened" a genuine
+  // possible outcome: paste the key, hit Enter expecting it to submit
+  // (nothing happens, silently), or the save request itself fails
+  // (silently) — no toast, no error, the field just sits there looking
+  // saved. This helper fixes both: Enter now blurs the field (triggering
+  // the same save as clicking away), and every save shows a toast either
+  // way so it's never ambiguous whether the key actually made it to the
+  // server.
+  function wireApiKeyInput(inputId, configKey) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") input.blur();
+    });
+    input.addEventListener("change", async (e) => {
+      const value = e.target.value.trim();
+      try {
+        const res = await api.post("/api/settings", { [configKey]: value });
+        if (res && res.error) {
+          showToast(errorText(res) || t("apiKeySaveFailed"), "error");
+        } else {
+          showToast(t("optionsSaved"), "info", 2000);
+        }
+      } catch (err) {
+        showToast(t("apiKeySaveFailed"), "error");
+      }
+    });
+  }
+  wireApiKeyInput("rawg-key-input", "rawg_api_key");
+  wireApiKeyInput("giantbomb-key-input", "giantbomb_api_key");
+  wireApiKeyInput("steamgriddb-key-input", "steamgriddb_api_key");
+  wireApiKeyInput("thegamesdb-key-input", "thegamesdb_api_key");
 
   document.getElementById("backup-now-btn").addEventListener("click", async () => {
     await api.post("/api/backups");

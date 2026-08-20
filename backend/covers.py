@@ -204,6 +204,10 @@ def _log_source_failure(source: str, query: str, exc_or_resp=None, note: str = N
             detail += " (check that the API key is valid)"
         elif exc_or_resp.status_code == 429:
             detail += " (rate limited)"
+        elif source == "giantbomb" and exc_or_resp.status_code == 404:
+            detail += (" (Giant Bomb's data API has been offline since their "
+                        "2025 split from Fandom, with no ETA — not a MyBacklog "
+                        "or API-key issue; see https://giantbomb.com/api)")
     elif isinstance(exc_or_resp, Exception):
         detail = f"{type(exc_or_resp).__name__}: {exc_or_resp}"
     else:
@@ -275,7 +279,15 @@ GIANTBOMB_HEADERS = {"User-Agent": "MyBacklog/1.0 (personal game backlog tracker
 def _search_giantbomb(query, api_key):
     """Giant Bomb — community-curated database with strong console/retro
     coverage. Requires a free API key (set in Settings). Giant Bomb blocks
-    requests without a real User-Agent header, hence GIANTBOMB_HEADERS."""
+    requests without a real User-Agent header, hence GIANTBOMB_HEADERS.
+
+    As of August 2026, Giant Bomb's data API (games/characters/companies/
+    etc.) is offline entirely following their split from Fandom in 2025 —
+    they rebuilt their whole stack from scratch and haven't restored the
+    API yet (their own https://giantbomb.com/api page confirms this, with
+    no ETA given). Every request here will 404 until that changes, which
+    _log_source_failure logs but can't distinguish from "this app is
+    misconfigured" without reading the message — hence this note."""
     if not api_key:
         return []
     try:
