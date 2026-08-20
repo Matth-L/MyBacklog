@@ -4,7 +4,13 @@ services:
     image: mybacklog:latest
     container_name: mybacklog
     ports:
-      - "5000:5000"
+      # Published to the host's loopback only by default, since the app
+      # itself has no login/authentication — anyone who can reach this
+      # port has full read/write access to your backlog. If you actually
+      # want to reach it from another device on your network (e.g. your
+      # phone), change this to "5000:5000" (all interfaces) or
+      # "192.168.1.50:5000:5000" (one specific interface) deliberately.
+      - "127.0.0.1:5000:5000"
     volumes:
       - ./data:/app/data
       - ./backup_backlog:/app/backup_backlog

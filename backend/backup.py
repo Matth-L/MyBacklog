@@ -14,6 +14,7 @@ from pathlib import Path
 
 from . import exporter, applog
 from .db import load_config
+from .zipsafe import safe_extractall, UnsafeZipError
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BACKUP_DIR = Path(os.environ.get("BACKLOG_BACKUP_DIR", PROJECT_ROOT / "backup_backlog"))
@@ -89,7 +90,16 @@ def restore_backup(name: str) -> bool:
     elif name.endswith(".zip"):
         with tempfile.TemporaryDirectory() as tmp:
             with zipfile.ZipFile(path) as zf:
-                zf.extractall(tmp)
+                # Defense in depth: these zips are normally ones this app
+                # produced itself (create_backup), but restore_backup also
+                # accepts anything named right sitting in backup_backlog/,
+                # so a corrupted or hand-placed zip shouldn't be able to
+                # write outside the temp dir (zip slip) — see zipsafe.py.
+                try:
+                    safe_extractall(zf, tmp)
+                except UnsafeZipError:
+                    applog.error(f"Refused to restore unsafe backup zip: {name}")
+                    return False
             tmp_path = Path(tmp)
             import_all(
                 backlog_csv=str(tmp_path / "My_Backlog_-_Backlog.csv"),

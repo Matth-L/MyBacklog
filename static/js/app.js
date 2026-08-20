@@ -291,7 +291,7 @@ function setCachedPlayerName(name) { localStorage.setItem("backlog_player_name",
  * `errorText` maps the stable, language-agnostic error codes returned by the
  * backend to a translated message (appending any dynamic `detail`). */
 function _i18nTable() {
-  const lang = localStorage.getItem("backlog_lang") || "fr";
+  const lang = currentLang();
   return (window.I18N_TRANSLATIONS || {})[lang] || (window.I18N_TRANSLATIONS || {})["en"] || {};
 }
 
@@ -464,8 +464,15 @@ function showConsentModal() {
 }
 function detectAndSetInitialLanguage() {
   if (localStorage.getItem("backlog_lang")) return; // already chosen explicitly
-  const sysLang = (navigator.language || "en").toLowerCase();
-  localStorage.setItem("backlog_lang", sysLang.startsWith("fr") ? "fr" : "en");
+  localStorage.setItem("backlog_lang", _detectDefaultLocale());
+}
+
+// Single source of truth for "what language is active right now" — used by
+// t() (i18n.js), _i18nTable(), and the settings modal, instead of each
+// re-deriving it (and previously each defaulting to "fr" independently if
+// nothing was set yet).
+function currentLang() {
+  return localStorage.getItem("backlog_lang") || _detectDefaultLocale();
 }
 
 // ============================================================ State
@@ -2562,7 +2569,7 @@ function closeSettingsModal() {
 }
 
 async function openSettingsModal() {
-  const lang = localStorage.getItem("backlog_lang") || "fr";
+  const lang = currentLang();
   const theme = currentTheme();
   const customColors = getCustomColors();
   const bgCfg = getBgMediaConfig();

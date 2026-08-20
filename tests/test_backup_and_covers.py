@@ -126,6 +126,31 @@ def test_restore_backup_rejects_unknown_file(temp_data_dir, temp_backup_dir):
     assert backup_mgr.restore_backup("does_not_exist.xlsx") is False
 
 
+def test_restore_backup_rejects_zip_slip(temp_data_dir, temp_backup_dir):
+    """A backup .zip is normally one this app produced itself, but
+    restore_backup will happily open anything named right sitting in
+    backup_backlog/ — so a zip whose internal entries try to escape the
+    extraction directory (e.g. '../../../evil') must be rejected outright
+    rather than partially extracted."""
+    import zipfile
+    from backend import backup as backup_mgr
+
+    temp_backup_dir.mkdir(parents=True, exist_ok=True)
+    evil_zip = temp_backup_dir / "evil.zip"
+    canary = temp_data_dir.parent / "zip_slip_canary.txt"
+    canary.unlink(missing_ok=True)
+
+    # Path relative to wherever extractall's target dir ends up being —
+    # several parent segments to comfortably escape a tempdir under /tmp.
+    traversal_name = "../" * 6 + "zip_slip_canary.txt"
+    with zipfile.ZipFile(evil_zip, "w") as zf:
+        zf.writestr(traversal_name, "pwned")
+        zf.writestr("My_Backlog_-_Backlog.csv", "Jeu,Status\n")
+
+    assert backup_mgr.restore_backup("evil.zip") is False
+    assert not canary.exists()
+
+
 def test_cover_search_candidates_parses_response(monkeypatch):
     from backend import covers as cover_search
 

@@ -1,13 +1,18 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MyBacklog — Ma ludothèque</title>
+<!-- Pre-JS fallback title; app.js overwrites this with t("appName") in the
+     user's actual language once translations load. -->
+<title>MyBacklog — My Game Library</title>
 <link rel="icon" type="image/png" href="/static/img/icon.png">
 <link rel="apple-touch-icon" href="/static/img/icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<!-- Self-hosted (see scripts/build_fonts.py) instead of loading from
+     fonts.googleapis.com -- this is meant to be a fully local/offline app,
+     so it shouldn't need a network round-trip to Google just to render
+     text on startup. -->
+<link rel="stylesheet" href="/static/fonts/fonts.css">
 <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>

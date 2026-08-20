@@ -13,10 +13,23 @@ from pathlib import Path
 from . import applog
 from .db import get_conn, load_config, save_config
 from .importer import import_all, extract_settings_from_xlsx
+from .zipsafe import safe_extractall, UnsafeZipError
 
 
 class SessionImportError(Exception):
-    pass
+    """Raised for any recoverable failure while importing a session file.
+
+    `code` is a stable, machine-readable identifier matching one of the
+    `err_*` keys in static/js/translations/*.js, so the frontend can show a
+    proper translated message instead of a raw exception string. `detail`
+    is optional dynamic text (a path, a list of missing files...)
+    substituted into that translated message via `{detail}`.
+    """
+
+    def __init__(self, code: str, detail: str = None):
+        self.code = code
+        self.detail = detail
+        super().__init__(f"{code}: {detail}" if detail else code)
 
 
 def clear_session():
@@ -43,11 +56,11 @@ def import_new_session(path: str) -> dict:
     this application's own export). Returns an import summary."""
     p = Path(path).expanduser()
     if not p.exists() or not p.is_file():
-        raise SessionImportError(f"File not found: {path}")
+        raise SessionImportError("file_not_found", path)
 
     suffix = p.suffix.lower()
     if suffix not in (".xlsx", ".zip"):
-        raise SessionImportError("Only .xlsx or .zip (exported session) files are supported.")
+        raise SessionImportError("unsupported_session_format")
 
     clear_session()
 
@@ -58,7 +71,10 @@ def import_new_session(path: str) -> dict:
     else:
         with tempfile.TemporaryDirectory() as tmp:
             with zipfile.ZipFile(p) as zf:
-                zf.extractall(tmp)
+                try:
+                    safe_extractall(zf, tmp)
+                except UnsafeZipError:
+                    raise SessionImportError("unsafe_zip")
             tmp_path = Path(tmp)
             backlog_csv = tmp_path / "My_Backlog_-_Backlog.csv"
             avis_csv = tmp_path / "My_Backlog_-_Avis.csv"
@@ -66,7 +82,7 @@ def import_new_session(path: str) -> dict:
             settings_json = tmp_path / "settings.json"
             missing = [f.name for f in (backlog_csv, avis_csv, complete_csv) if not f.exists()]
             if missing:
-                raise SessionImportError("invalid_session_zip", detail=_format_missing(missing))
+                raise SessionImportError("invalid_session_zip", ", ".join(missing))
             summary = import_all(
                 backlog_csv=str(backlog_csv), avis_csv=str(avis_csv), complete_csv=str(complete_csv),
             )

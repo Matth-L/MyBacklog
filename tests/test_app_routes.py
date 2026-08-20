@@ -358,6 +358,30 @@ def test_session_import_reports_duplicates_found(client, tmp_path):
     assert res.get_json()["summary"]["duplicates_found"] == 1
 
 
+def test_session_import_by_path_disabled_when_lan_allowed(client, tmp_path, monkeypatch):
+    """The typed-file-path import endpoint lets the caller name any file
+    the server process can read — fine when only the local user can reach
+    this port, but a real arbitrary-file-read risk once BACKLOG_ALLOW_LAN
+    opens the app up to other devices on the network. It should refuse to
+    run at all in that mode, regardless of whether the path is otherwise
+    valid."""
+    import app as app_module
+    from backend import exporter as exporter_module
+
+    xlsx_path = tmp_path / "session.xlsx"
+    xlsx_path.write_bytes(exporter_module.export_xlsx())
+
+    monkeypatch.setitem(app_module.app.config, "BACKLOG_ALLOW_LAN", True)
+    res = client.post("/api/session/import", json={"path": str(xlsx_path)})
+    assert res.status_code == 403
+    assert res.get_json()["error"] == "path_import_disabled_on_lan"
+
+    # The file-picker upload endpoint is a different attack surface (the
+    # caller supplies file *content*, not an arbitrary server-side path) and
+    # stays available either way.
+    monkeypatch.setitem(app_module.app.config, "BACKLOG_ALLOW_LAN", False)
+
+
 # ------------------------------------------------------------- Session import via file picker (not a typed path)
 
 def test_session_import_file_accepts_uploaded_xlsx(client):
@@ -651,11 +675,20 @@ def test_cover_from_url_returns_clear_error_on_download_failure(client, monkeypa
 # ------------------------------------------------------------- Cover proxy (for the cover editor)
 
 def test_cover_proxy_streams_valid_image_same_origin(client, monkeypatch):
-    import app as app_module
+    from backend import covers as cover_search
     from PIL import Image
     import io as _io
 
-    img = Image.new("RGB", (10, 10), (255, 0, 0))
+    # Random noise, not a flat color: PNG compresses a flat-color swatch
+    # down to well under MIN_IMAGE_BYTES (the size floor every cover
+    # download enforces, to reject trivially-tiny/broken images), which
+    # would fail validation before this test even gets to what it's
+    # actually checking.
+    import random
+    rng = random.Random(1)
+    img = Image.new("RGB", (60, 60))
+    img.putdata([(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255))
+                 for _ in range(60 * 60)])
     buf = _io.BytesIO()
     img.save(buf, "PNG")
     png_bytes = buf.getvalue()
@@ -665,7 +698,13 @@ def test_cover_proxy_streams_valid_image_same_origin(client, monkeypatch):
         content = png_bytes
         headers = {"content-type": "image/png"}
 
-    monkeypatch.setattr(app_module.requests, "get", lambda *a, **k: FakeResp())
+    # cover-proxy now delegates its fetch (and SSRF guard) to
+    # backend.covers.fetch_proxied_image, shared with every other cover
+    # download path — bypass the SSRF/DNS check here since it's exercised
+    # by its own dedicated tests below, and this test's fake hostname
+    # ("fake") wouldn't resolve.
+    monkeypatch.setattr(cover_search, "_is_safe_remote_url", lambda url: True)
+    monkeypatch.setattr(cover_search.requests, "get", lambda *a, **k: FakeResp())
     res = client.get("/api/cover-proxy?url=http://fake/cover.png")
     assert res.status_code == 200
     assert res.mimetype == "image/png"
@@ -673,14 +712,15 @@ def test_cover_proxy_streams_valid_image_same_origin(client, monkeypatch):
 
 
 def test_cover_proxy_rejects_non_image_content(client, monkeypatch):
-    import app as app_module
+    from backend import covers as cover_search
 
     class FakeResp:
         status_code = 200
         content = b"<html>not an image</html>"
         headers = {"content-type": "text/html"}
 
-    monkeypatch.setattr(app_module.requests, "get", lambda *a, **k: FakeResp())
+    monkeypatch.setattr(cover_search, "_is_safe_remote_url", lambda url: True)
+    monkeypatch.setattr(cover_search.requests, "get", lambda *a, **k: FakeResp())
     res = client.get("/api/cover-proxy?url=http://fake/notreally.png")
     assert res.status_code == 502
 
@@ -691,14 +731,26 @@ def test_cover_proxy_requires_url_param(client):
 
 
 def test_cover_proxy_handles_network_failure(client, monkeypatch):
-    import app as app_module
+    from backend import covers as cover_search
     import requests as req_module
 
     def boom(*a, **k):
         raise req_module.RequestException("down")
-    monkeypatch.setattr(app_module.requests, "get", boom)
+    monkeypatch.setattr(cover_search, "_is_safe_remote_url", lambda url: True)
+    monkeypatch.setattr(cover_search.requests, "get", boom)
     res = client.get("/api/cover-proxy?url=http://fake/cover.png")
     assert res.status_code == 502
+
+
+def test_cover_proxy_rejects_unsafe_url(client):
+    """The SSRF guard runs even for cover-proxy: a URL that isn't
+    http(s), or a hostname that resolves to a private/internal address,
+    is rejected before any request is made — no monkeypatching needed
+    since it should never reach requests.get at all."""
+    res = client.get("/api/cover-proxy?url=http://127.0.0.1:9999/secret")
+    assert res.status_code == 502
+    res2 = client.get("/api/cover-proxy?url=ftp://example.com/cover.png")
+    assert res2.status_code == 502
 
 
 # ------------------------------------------------------------- Deleting a game cleans up stale suggestions

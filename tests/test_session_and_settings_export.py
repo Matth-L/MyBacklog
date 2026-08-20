@@ -102,3 +102,24 @@ def test_import_new_session_rejects_unsupported_extension(temp_data_dir, tmp_pat
     bad.write_text("hello")
     with pytest.raises(session_mgr.SessionImportError):
         session_mgr.import_new_session(str(bad))
+
+
+def test_import_new_session_rejects_zip_slip(temp_data_dir, tmp_path):
+    """A session .zip whose entries try to escape the extraction directory
+    must be rejected with SessionImportError('unsafe_zip'), not partially
+    extracted onto the filesystem."""
+    import zipfile
+    from backend import session as session_mgr
+
+    evil_zip = tmp_path / "evil_session.zip"
+    canary = tmp_path.parent / "session_zip_slip_canary.txt"
+    canary.unlink(missing_ok=True)
+
+    traversal_name = "../" * 6 + "session_zip_slip_canary.txt"
+    with zipfile.ZipFile(evil_zip, "w") as zf:
+        zf.writestr(traversal_name, "pwned")
+
+    with pytest.raises(session_mgr.SessionImportError) as excinfo:
+        session_mgr.import_new_session(str(evil_zip))
+    assert excinfo.value.code == "unsafe_zip"
+    assert not canary.exists()

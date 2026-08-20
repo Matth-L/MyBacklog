@@ -164,7 +164,52 @@ def test_download_image_accepts_real_image(monkeypatch, tmp_path):
         def raise_for_status(self):
             pass
 
+    monkeypatch.setattr(cover_search, "_is_safe_remote_url", lambda url: True)
     monkeypatch.setattr(cover_search.requests, "get", lambda *a, **k: FakeResp())
     ok = cover_search.download_image("http://fake/cover.png", tmp_path / "out.png")
     assert ok is True
     assert (tmp_path / "out.png").exists()
+
+
+# ------------------------------------------------------------- SSRF guard (_is_safe_remote_url)
+
+def test_is_safe_remote_url_rejects_non_http_scheme():
+    from backend import covers as cover_search
+    assert cover_search._is_safe_remote_url("ftp://example.com/x.png") is False
+    assert cover_search._is_safe_remote_url("file:///etc/passwd") is False
+    assert cover_search._is_safe_remote_url("not a url") is False
+    assert cover_search._is_safe_remote_url("") is False
+
+
+def test_is_safe_remote_url_rejects_private_and_loopback_ips():
+    from backend import covers as cover_search
+    for url in (
+        "http://127.0.0.1/x.png",
+        "http://localhost/x.png",
+        "http://10.0.0.5/x.png",
+        "http://192.168.1.1/x.png",
+        "http://169.254.169.254/latest/meta-data/",  # cloud metadata endpoint
+        "http://[::1]/x.png",
+    ):
+        assert cover_search._is_safe_remote_url(url) is False, url
+
+
+def test_is_safe_remote_url_accepts_public_hostname(monkeypatch):
+    from backend import covers as cover_search
+    # Don't depend on real DNS in the test environment — simulate a
+    # hostname that resolves to a plainly public address.
+    monkeypatch.setattr(
+        cover_search.socket, "getaddrinfo",
+        lambda host, port: [(2, 1, 6, "", ("93.184.216.34", 0))],
+    )
+    assert cover_search._is_safe_remote_url("https://example.com/cover.jpg") is True
+
+
+def test_is_safe_remote_url_rejects_unresolvable_hostname(monkeypatch):
+    from backend import covers as cover_search
+    import socket as socket_module
+
+    def boom(host, port):
+        raise socket_module.gaierror("no such host")
+    monkeypatch.setattr(cover_search.socket, "getaddrinfo", boom)
+    assert cover_search._is_safe_remote_url("https://nowhere.invalid/x.png") is False

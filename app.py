@@ -5,7 +5,6 @@ import gzip
 import logging
 import threading
 import webbrowser
-import requests
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory, Response
@@ -39,6 +38,16 @@ app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB
 UPLOAD_TMP = DATA_DIR / "uploads_tmp"
 UPLOAD_TMP.mkdir(parents=True, exist_ok=True)
+
+# This is a single-user app with no login/auth of any kind, so whether it's
+# reachable from other devices matters a lot. Defaults to localhost-only;
+# set BACKLOG_ALLOW_LAN=1 to explicitly opt into listening on every network
+# interface (e.g. to reach it from a phone on the same Wi-Fi, or because
+# it's running inside a container where the container's own loopback isn't
+# reachable from the host). See __main__ below for where this drives the
+# actual bind address, and session_import() below for the one route it also
+# gates off entirely once LAN access is allowed.
+app.config["BACKLOG_ALLOW_LAN"] = os.environ.get("BACKLOG_ALLOW_LAN") == "1"
 
 init_db()
 
@@ -158,7 +167,11 @@ def _do_session_import(path: str):
     try:
         summary = session_mgr.import_new_session(path)
     except session_mgr.SessionImportError as e:
-        return jsonify({"error": "import_failed", "detail": str(e)}), 400
+        # Propagate the specific machine-readable code + detail (matches an
+        # err_<code> key in the frontend's translation tables) rather than
+        # squashing every recoverable import failure into one generic
+        # "import_failed" message.
+        return jsonify({"error": e.code, "detail": e.detail}), 400
     except Exception as e:
         applog.error(f"Session import failed: {e}")
         return jsonify({"error": "import_failed", "detail": str(e)}), 400
@@ -175,7 +188,18 @@ def session_import():
     Always clears the current session first. Accepts a local path to a
     .xlsx file or a MyBacklog session .zip (as produced by /api/export/*).
     Kept for scripting/automation use; the Settings UI itself now uses the
-    file-picker endpoint below instead of asking the user to type a path."""
+    file-picker endpoint below instead of asking the user to type a path.
+
+    Disabled whenever BACKLOG_ALLOW_LAN is set: this route lets the caller
+    name *any* file path on the machine the server has read access to. On
+    localhost-only that's just the same user asking the app to read their
+    own files, but once the app is reachable from other devices on the
+    network, that turns into an arbitrary-file-read primitive for anyone
+    who can reach this port. The file-picker upload endpoint below covers
+    the normal UI use case without this risk and stays enabled either way.
+    """
+    if app.config["BACKLOG_ALLOW_LAN"]:
+        return jsonify({"error": "path_import_disabled_on_lan"}), 403
     data = request.get_json(force=True) or {}
     path = (data.get("path") or "").strip()
     if not path:
@@ -259,7 +283,7 @@ def get_game(game_id):
     row = conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
     conn.close()
     if not row:
-        return jsonify({"error": "not found"}), 404
+        return jsonify({"error": "not_found"}), 404
     return jsonify(_row_to_dict(row))
 
 
@@ -356,7 +380,7 @@ def update_game(game_id):
     row = conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
     conn.close()
     if not row:
-        return jsonify({"error": "not found"}), 404
+        return jsonify({"error": "not_found"}), 404
     # Backup only triggered by an explicit action: here, editing a review
     # (not on every small field change).
     if "review" in data:
@@ -375,7 +399,7 @@ def lookup_hltb():
     title = (data.get("title") or "").strip()
     mode = data.get("mode", "main")
     if mode not in hltb.MODE_FIELDS:
-        return jsonify({"error": "invalid mode"}), 400
+        return jsonify({"error": "invalid_mode"}), 400
     if not title:
         return jsonify({"error": "no_hltb_match", "code": "no_match"}), 404
 
@@ -398,11 +422,11 @@ def fetch_hltb(game_id):
     data = request.get_json(force=True) or {}
     mode = data.get("mode", "main")
     if mode not in hltb.MODE_FIELDS:
-        return jsonify({"error": "invalid mode"}), 400
+        return jsonify({"error": "invalid_mode"}), 400
 
     game = conn_fetch_one("SELECT title FROM games WHERE id = ?", (game_id,))
     if not game:
-        return jsonify({"error": "not found"}), 404
+        return jsonify({"error": "not_found"}), 404
 
     hours = hltb.fetch_estimated_hours(game["title"], mode)
     if hours is None:
@@ -556,7 +580,7 @@ def link_orphan_review(orphan_id):
     orphan = conn.execute("SELECT * FROM orphan_reviews WHERE id = ?", (orphan_id,)).fetchone()
     if not orphan:
         conn.close()
-        return jsonify({"error": "not found"}), 404
+        return jsonify({"error": "not_found"}), 404
     target_game = conn.execute("SELECT id FROM games WHERE id = ?", (game_id,)).fetchone()
     if not target_game:
         conn.close()
@@ -580,7 +604,7 @@ def dismiss_orphan_review(orphan_id):
     orphan = conn.execute("SELECT id FROM orphan_reviews WHERE id = ?", (orphan_id,)).fetchone()
     if not orphan:
         conn.close()
-        return jsonify({"error": "not found"}), 404
+        return jsonify({"error": "not_found"}), 404
     conn.execute("UPDATE orphan_reviews SET linked_game_id = -1 WHERE id = ?", (orphan_id,))
     conn.commit()
     conn.close()
@@ -630,7 +654,7 @@ def sanitize_pending():
 def sanitize_accept(game_id):
     ok = sanitize_mgr.accept_suggestion(game_id)
     if not ok:
-        return jsonify({"error": "not found"}), 404
+        return jsonify({"error": "not_found"}), 404
     applog.info(f"Name sanitized for game #{game_id}.")
     return jsonify({"ok": True})
 
@@ -639,7 +663,7 @@ def sanitize_accept(game_id):
 def sanitize_reject(game_id):
     ok = sanitize_mgr.reject_suggestion(game_id)
     if not ok:
-        return jsonify({"error": "not found"}), 404
+        return jsonify({"error": "not_found"}), 404
     return jsonify({"ok": True})
 
 
@@ -709,20 +733,20 @@ def cover_proxy():
     interactive cropping and then exports pixel data from it — a canvas
     fed directly from a cross-origin image without permissive CORS headers
     becomes 'tainted' and silently refuses to export, so every source the
-    editor can open has to come back through our own origin first."""
+    editor can open has to come back through our own origin first.
+
+    The actual fetch (and its SSRF guard, rejecting anything that isn't a
+    plain http(s) URL resolving to a public IP) lives in
+    backend.covers.fetch_proxied_image, shared with every other cover
+    download path rather than duplicated here."""
     url = request.args.get("url")
     if not url:
         return jsonify({"error": "url_required"}), 400
-    try:
-        resp = requests.get(url, timeout=cover_search.TIMEOUT)
-    except requests.RequestException:
+    result = cover_search.fetch_proxied_image(url)
+    if result is None:
         return jsonify({"error": "download_failed"}), 502
-    if resp.status_code != 200 or not cover_search.is_valid_image(resp.content):
-        return jsonify({"error": "invalid_image"}), 502
-    content_type = resp.headers.get("content-type") or "image/jpeg"
-    if not content_type.startswith("image/"):
-        content_type = "image/jpeg"
-    return Response(resp.content, mimetype=content_type, headers={"Cache-Control": "no-cache"})
+    content, content_type = result
+    return Response(content, mimetype=content_type, headers={"Cache-Control": "no-cache"})
 
 
 @app.route("/api/games/<int:game_id>/cover-from-url", methods=["POST"])
@@ -730,7 +754,7 @@ def set_cover_from_url(game_id):
     data = request.get_json(force=True)
     url = data.get("url")
     if not url:
-        return jsonify({"error": "url requise"}), 400
+        return jsonify({"error": "url_required"}), 400
     game = conn_fetch_one("SELECT title FROM games WHERE id = ?", (game_id,))
     base = COVERS_DIR / cover_search.safe_title_filename(game["title"] if game else "jeu", game_id, "")
     dest = cover_search.download_image_with_detected_ext(url, base)
@@ -895,12 +919,36 @@ def _open_browser():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+    allow_lan = app.config["BACKLOG_ALLOW_LAN"]
+    # Localhost-only by default: this app has no login/authentication of
+    # any kind, so binding 0.0.0.0 would let any other device on the same
+    # network read, edit, or delete the whole backlog. BACKLOG_ALLOW_LAN=1
+    # opts into that explicitly (e.g. to also use it from a phone on the
+    # same Wi-Fi). Inside Docker this is set for you (see Dockerfile) since
+    # the container's own loopback isn't reachable from the host anyway —
+    # the actual exposure there is controlled by the docker-compose port
+    # mapping instead.
+    host = "0.0.0.0" if allow_lan else "127.0.0.1"
+    # Always show/open 127.0.0.1 for the local user, even when also
+    # listening on 0.0.0.0 for other devices — "http://0.0.0.0:5000" isn't
+    # a meaningful URL to open in a browser.
     url = f"http://127.0.0.1:{port}"
     if os.environ.get("BACKLOG_NO_BROWSER") != "1":
         threading.Timer(1.0, _open_browser).start()
     applog.startup_banner(url)
+    if allow_lan:
+        applog.warn(
+            "BACKLOG_ALLOW_LAN=1: listening on all network interfaces. "
+            "Anyone on your network can reach this app — only enable this "
+            "on networks you trust."
+        )
     try:
-        app.run(host="0.0.0.0", port=port, debug=False)
+        # threaded=True so a slow outbound call (HowLongToBeat lookup,
+        # cover-art search) doesn't freeze the whole UI for the duration —
+        # Werkzeug's dev server is single-threaded by default, so without
+        # this every other request queues behind whichever one is
+        # currently waiting on a third-party API.
+        app.run(host=host, port=port, debug=False, threaded=True)
     except KeyboardInterrupt:
         pass
     finally:

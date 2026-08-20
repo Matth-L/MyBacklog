@@ -24,11 +24,13 @@ import re
 import io
 import time
 import difflib
+import ipaddress
+import socket
 import threading
 import requests
 from pathlib import Path
-from urllib.parse import quote
-from . import sequel_guard
+from urllib.parse import quote, urlparse
+from . import applog, sequel_guard
 
 STORE_SEARCH_URL = "https://store.steampowered.com/api/storesearch/"
 STEAM_COVER_TEMPLATE = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/library_600x900.jpg"
@@ -183,6 +185,32 @@ def _query_variants(title: str):
     return ordered
 
 
+def _log_source_failure(source: str, query: str, exc_or_resp=None, note: str = None):
+    """Every keyed source below is wrapped in a broad except that returns
+    [] on any failure — deliberately, so one misbehaving source never
+    breaks the others or the whole search. But that used to mean a bad or
+    expired API key, a rate limit, or a malformed request failed completely
+    silently: the source would just always contribute zero results, with
+    no way to tell that apart from "this source genuinely has no cover for
+    this game". Steam needs no key and basically never fails this way, so
+    the visible symptom was always the same: every result badge says
+    Steam, even with other keys configured, and nothing in the UI explains
+    why. This logs the real reason to the terminal/console MyBacklog is
+    running in, so a source that looks configured but never returns
+    anything is actually diagnosable."""
+    if isinstance(exc_or_resp, requests.Response):
+        detail = f"HTTP {exc_or_resp.status_code}"
+        if exc_or_resp.status_code in (401, 403):
+            detail += " (check that the API key is valid)"
+        elif exc_or_resp.status_code == 429:
+            detail += " (rate limited)"
+    elif isinstance(exc_or_resp, Exception):
+        detail = f"{type(exc_or_resp).__name__}: {exc_or_resp}"
+    else:
+        detail = note or "unknown error"
+    applog.warn(f"Cover search [{source}] failed for {query!r}: {detail}")
+
+
 def _search_steam(query):
     try:
         resp = requests.get(
@@ -220,7 +248,11 @@ def _search_rawg(query, api_key):
         )
         resp.raise_for_status()
         data = resp.json()
-    except (requests.RequestException, ValueError):
+    except requests.HTTPError as exc:
+        _log_source_failure("rawg", query, exc.response)
+        return []
+    except (requests.RequestException, ValueError) as exc:
+        _log_source_failure("rawg", query, exc)
         return []
     results = []
     for it in data.get("results", []):
@@ -256,9 +288,17 @@ def _search_giantbomb(query, api_key):
         )
         resp.raise_for_status()
         data = resp.json()
-    except (requests.RequestException, ValueError):
+    except requests.HTTPError as exc:
+        _log_source_failure("giantbomb", query, exc.response)
+        return []
+    except (requests.RequestException, ValueError) as exc:
+        _log_source_failure("giantbomb", query, exc)
         return []
     if data.get("error") != "OK":
+        _log_source_failure(
+            "giantbomb", query,
+            note=f"API returned error={data.get('error')!r} (often means an invalid API key)",
+        )
         return []
     results = []
     for it in data.get("results", []):
@@ -300,9 +340,17 @@ def _search_steamgriddb(query, api_key):
         )
         resp.raise_for_status()
         data = resp.json()
-    except (requests.RequestException, ValueError):
+    except requests.HTTPError as exc:
+        _log_source_failure("steamgriddb", query, exc.response)
+        return []
+    except (requests.RequestException, ValueError) as exc:
+        _log_source_failure("steamgriddb", query, exc)
         return []
     if not data.get("success"):
+        _log_source_failure(
+            "steamgriddb", query,
+            note=f"API returned success=false: {data.get('errors')}",
+        )
         return []
     games = data.get("data") or []
     if not games:
@@ -362,9 +410,18 @@ def _search_thegamesdb(query, api_key):
         )
         resp.raise_for_status()
         data = resp.json()
-    except (requests.RequestException, ValueError):
+    except requests.HTTPError as exc:
+        _log_source_failure("thegamesdb", query, exc.response)
+        return []
+    except (requests.RequestException, ValueError) as exc:
+        _log_source_failure("thegamesdb", query, exc)
         return []
     if data.get("code") != 200:
+        _log_source_failure(
+            "thegamesdb", query,
+            note=f"API returned code={data.get('code')!r}: {data.get('status')} "
+                 f"(often means an invalid API key)",
+        )
         return []
     games = (data.get("data") or {}).get("games") or []
     if not games:
@@ -610,14 +667,61 @@ def _detect_image_ext(content: bytes) -> str:
 MIN_IMAGE_BYTES = 500
 
 
-def _fetch_valid_image_bytes(url: str):
+def _is_safe_remote_url(url: str) -> bool:
+    """SSRF guard for every outbound cover-art fetch (search results, a
+    manually pasted URL, or the cover-proxy route the crop editor uses).
+
+    Without this, any of those code paths — all reachable from the browser
+    with a caller-supplied URL — would let someone make this server issue
+    an arbitrary HTTP request: probing other services on the local network,
+    a cloud metadata endpoint, etc. Only allows http(s) URLs whose hostname
+    resolves exclusively to public IP addresses; private/loopback/
+    link-local/reserved ranges are rejected outright.
+
+    This is a best-effort check performed before the real request, so it
+    doesn't close a DNS-rebinding race (the hostname could resolve
+    differently by the time `requests` connects) — but it stops the
+    straightforward case of someone pasting or forging an internal URL,
+    which is the realistic threat here for a local single-user app."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return False
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or
+                ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+            return False
+    return True
+
+
+def _fetch_valid_image_bytes(url: str, want_content_type: bool = False):
     """Shared download + validation core for every cover fetch.
 
     Fetches `url`, rejects non-image Content-Types, and verifies the bytes
     really decode as an image (defends against executables renamed .jpg, error
-    pages, etc.). Returns the validated image bytes, or None on any failure.
-    Both download_image() and download_image_with_detected_ext() build on this
-    so the fetch/validate logic lives in exactly one place.
+    pages, etc.). Returns the validated image bytes, or None on any failure
+    — or, with want_content_type=True, an (bytes, content_type) tuple so a
+    single request can serve both a save-to-disk caller and a stream-back-
+    to-the-browser caller (see fetch_proxied_image below) without fetching
+    the same URL twice. Both download_image() and
+    download_image_with_detected_ext() build on this so the fetch/validate
+    logic lives in exactly one place.
 
         +-----------+     GET url      +---------------+
         |  caller   | ----------------> |  requests.get |
@@ -625,6 +729,7 @@ def _fetch_valid_image_bytes(url: str):
                                                |  resp.content
                                                v
                                   +--------------------+
+                                  | url host is public? |--- no --> None
                                   | status==200 ?      |--- no --> None
                                   | bytes >= MIN ?     |
                                   | content-type img?  |
@@ -634,17 +739,22 @@ def _fetch_valid_image_bytes(url: str):
                                             v
                                   return content (bytes)
     """
+    empty = (None, None) if want_content_type else None
+    if not _is_safe_remote_url(url):
+        return empty
     try:
         resp = requests.get(url, timeout=TIMEOUT)
     except requests.RequestException:
-        return None
+        return empty
     if resp.status_code != 200 or len(resp.content) < MIN_IMAGE_BYTES:
-        return None
+        return empty
     content_type = resp.headers.get("content-type", "")
     if content_type and not content_type.startswith("image/"):
-        return None
+        return empty
     if not is_valid_image(resp.content):
-        return None
+        return empty
+    if want_content_type:
+        return resp.content, (content_type or "image/jpeg")
     return resp.content
 
 
@@ -675,6 +785,23 @@ def download_image_with_detected_ext(url: str, base_path):
     with open(dest, "wb") as f:
         f.write(content)
     return dest
+
+
+def fetch_proxied_image(url: str):
+    """Used by the /api/cover-proxy route: fetches an external URL through
+    the exact same SSRF guard and validation as every other cover download
+    (_fetch_valid_image_bytes / _is_safe_remote_url above), and returns
+    (content_bytes, content_type) for streaming back to the browser same-
+    origin — the cover editor loads candidates into a <canvas> for cropping,
+    and a canvas fed directly from a cross-origin image without permissive
+    CORS headers becomes "tainted" and silently refuses to export, so every
+    source the editor can open has to come back through our own origin
+    first. Returns None if the URL is unsafe or the fetch/validation
+    fails."""
+    content, content_type = _fetch_valid_image_bytes(url, want_content_type=True)
+    if content is None:
+        return None
+    return content, content_type
 
 
 # --------------------------------------------------------------------------
